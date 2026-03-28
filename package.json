@@ -1,0 +1,26 @@
+{
+  "name": "timebill",
+  "version": "0.1.0",
+  "description": "Time tracker automático para estudios jurídicos",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
+    "build": "vite build",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "electron-rebuild -f -w better-sqlite3"
+  },
+  "dependencies": {
+    "active-win": "^8.0.0",
+    "better-sqlite3": "^9.4.3",
+    "electron-store": "^8.2.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "@vitejs/plugin-react": "^4.2.0",
+    "concurrently": "^8.2.0",
+    "cross-env": "^7.0.3",
+    "electron": "^29.0.0",
+    "vite": "^5.0.0",
+    "wait-on": "^7.2.0"
+  }
+}
