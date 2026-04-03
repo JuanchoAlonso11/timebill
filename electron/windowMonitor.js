@@ -13,21 +13,29 @@ let pollInterval = null
 let lastTitle = null
 let titleSince = null   // timestamp desde el que el título actual está activo
 let onDetectionCallback = null  // avisa a main.js para mostrar popup
-let activeWin = null
+
+const { execSync } = require('child_process')
+
+function getActiveWindow() {
+  try {
+    const title = execSync(
+      'powershell -ExecutionPolicy Bypass -File "getwindow.ps1"',
+      { timeout: 3000, cwd: 'C:\\Users\\ASUS G14\\Desktop\\Work\\timebill' }
+    ).toString().trim()
+    return title ? { title } : null
+  } catch {
+    return null
+  }
+}
 
 async function loadActiveWin() {
-  // active-win es ESM, lo importamos dinámicamente
-  if (!activeWin) {
-    const mod = await import('active-win')
-    activeWin = mod.default
-  }
-  return activeWin
+  return { default: getActiveWindow }
 }
 
 async function poll() {
   try {
-    const getActiveWin = await loadActiveWin()
-    const win = await getActiveWin()
+    const win = getActiveWindow()
+    console.log('[poll] título detectado:', win?.title)
 
     if (!win) return
 
