@@ -9,7 +9,7 @@
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen } = require('electron')
 const path = require('path')
 const { start: startMonitor, stop: stopMonitor } = require('./windowMonitor')
-const { startEntry, stopEntry, getActiveEntry, updateTaskType, setOnIdle, setOnStop } = require('./timer')
+const { startEntry, stopEntry, pauseEntry, resumeEntry, getActiveEntry, updateTaskType, setOnIdle, setOnStop } = require('./timer')
 const { getAllClients, upsertClient, setClientRules } = require('./db')
 
 const IS_DEV = process.env.NODE_ENV === 'development'
@@ -163,8 +163,39 @@ function showDetectionPopup(detection) {
 }
 
 function showIdlePopup() {
-  // Similar al popup de detección pero con mensaje de idle
-  // TODO: implementar en semana 2
+  if (popupWindow) return
+
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize
+
+  popupWindow = new BrowserWindow({
+    width: 300,
+    height: 200,
+    x: width - 320,
+    y: height - 220,
+    frame: false,
+    alwaysOnTop: true,
+    resizable: false,
+    skipTaskbar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+    },
+  })
+
+  const url = IS_DEV
+    ? 'http://localhost:5173/idle'
+    : `file://${path.join(__dirname, '../dist/idle.html')}`
+
+  popupWindow.loadURL(url)
+
+  // Auto-pausar a los 30 segundos si no responde
+  setTimeout(() => {
+    if (popupWindow?.isVisible()) {
+      pauseEntry('idle')
+      popupWindow.close()
+      popupWindow = null
+    }
+  }, 30_000)
 }
 
 function showTimerPopup() {
@@ -259,6 +290,28 @@ function setupIPC() {
     setClientRules(clientId, keywords)
     const { invalidateCache } = require('./ruleEngine')
     invalidateCache()
+    return true
+  })
+  // Idle popup — el usuario confirma que sigue trabajando
+  ipcMain.handle('idle:continue', () => {
+    popupWindow?.close()
+    popupWindow = null
+    resumeEntry()
+    return true
+  })
+
+  // Idle popup — el usuario confirma que no estaba trabajando
+  ipcMain.handle('idle:stop', (_, discardMinutes) => {
+    popupWindow?.close()
+    popupWindow = null
+    // Descontar los minutos idle del timer
+    if (discardMinutes > 0) {
+      const entry = getActiveEntry()
+      if (entry) {
+        pauseEntry('manual')
+      }
+    }
+    stopEntry()
     return true
   })
 }
