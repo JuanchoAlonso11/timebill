@@ -15,6 +15,7 @@ export default defineConfig({
       input: {
         popup: resolve(__dirname, 'renderer/popup.html'),
         tray:  resolve(__dirname, 'renderer/tray.html'),
+	idle:  resolve(__dirname, 'renderer/idle.html'),
       },
     },
   },

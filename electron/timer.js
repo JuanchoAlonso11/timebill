@@ -1,71 +1,37 @@
 // electron/timer.js
-// Maneja el ciclo de vida de una entrada de tiempo:
-// inicio → acumulación → pausa por idle → cierre → guardado en SQLite
-
 const { randomUUID } = require('crypto')
 const { insertEntry, closeEntry } = require('./db')
 
-const IDLE_THRESHOLD_MS = 5 * 60 * 1000 // 5 minutos sin actividad
-const IDLE_CHECK_INTERVAL_MS = 30_000    // chequea idle cada 30s
+const IDLE_THRESHOLD_MS = 30 * 1000  // 30s para testing — cambiar a 5 * 60 * 1000 en producción
+const IDLE_CHECK_INTERVAL_MS = 5_000  // chequea cada 5 segundos
 
-let activeEntry = null      // entrada en curso
-let lastActivityAt = Date.now()
+let activeEntry = null
 let idleCheckInterval = null
-let onIdleCallback = null   // función a llamar cuando se detecta idle
-let onStopCallback = null   // función a llamar al cerrar entrada (para actualizar UI)
-
-// Registra cualquier evento de input del OS como "actividad"
-function recordActivity() {
-  lastActivityAt = Date.now()
-  // Si el timer estaba pausado por idle, lo reanudamos
-  if (activeEntry?.paused) {
-    resumeEntry()
-  }
-}
-
-function isIdle() {
-  return Date.now() - lastActivityAt > IDLE_THRESHOLD_MS
-}
+let onIdleCallback = null
+let onStopCallback = null
 
 // --- Inicio de entrada ---
 
 function startEntry({ clientId, clientName, taskType = 'general', windowTitle, source = 'auto' }) {
-  // Si hay una entrada activa para el mismo cliente, no arrancamos otra
   if (activeEntry && activeEntry.clientId === clientId && !activeEntry.paused) {
     return activeEntry
   }
-
-  // Cerrar la anterior si era de otro cliente
-  if (activeEntry) {
-    stopEntry()
-  }
+  if (activeEntry) stopEntry()
 
   const now = new Date().toISOString()
   const id = randomUUID()
 
   activeEntry = {
-    id,
-    clientId,
-    clientName,
-    taskType,
-    windowTitle,
-    source,
+    id, clientId, clientName, taskType, windowTitle, source,
     startedAt: now,
-    pausedMs: 0,        // ms acumulados en pausa (no se cobran)
+    pausedMs: 0,
     pauseStart: null,
     paused: false,
   }
 
-  insertEntry({
-    id,
-    client_id: clientId,
-    task_type: taskType,
-    started_at: now,
-    window_title: windowTitle,
-    source,
-  })
-
+  insertEntry({ id, client_id: clientId, task_type: taskType, started_at: now, window_title: windowTitle, source })
   startIdleCheck()
+  console.log('[timer] Entrada iniciada para:', clientName)
   return activeEntry
 }
 
@@ -76,6 +42,7 @@ function pauseEntry(reason = 'idle') {
   activeEntry.paused = true
   activeEntry.pauseStart = Date.now()
   activeEntry.pauseReason = reason
+  console.log('[timer] Pausado por:', reason)
 }
 
 function resumeEntry() {
@@ -86,6 +53,7 @@ function resumeEntry() {
   activeEntry.paused = false
   activeEntry.pauseStart = null
   activeEntry.pauseReason = null
+  console.log('[timer] Reanudado')
 }
 
 // --- Cierre de entrada ---
@@ -93,7 +61,6 @@ function resumeEntry() {
 function stopEntry() {
   if (!activeEntry) return null
 
-  // Si estaba pausado, cerramos el tramo de pausa
   if (activeEntry.paused && activeEntry.pauseStart) {
     activeEntry.pausedMs += Date.now() - activeEntry.pauseStart
   }
@@ -103,31 +70,40 @@ function stopEntry() {
   const billableMs = Math.max(0, totalMs - activeEntry.pausedMs)
   const durationSec = Math.round(billableMs / 1000)
 
-  // No guardamos entradas menores a 30 segundos (ruido)
   if (durationSec >= 30) {
     closeEntry({ id: activeEntry.id, ended_at: endedAt, duration_sec: durationSec })
+    console.log('[timer] Entrada guardada:', durationSec, 'segundos facturables')
+  } else {
+    console.log('[timer] Entrada descartada (menos de 30s)')
   }
 
   const stopped = { ...activeEntry, endedAt, durationSec }
-
   stopIdleCheck()
   activeEntry = null
   onStopCallback?.(stopped)
-
   return stopped
 }
 
-// --- Idle detection ---
+// --- Idle detection usando powerMonitor de Electron ---
 
 function startIdleCheck() {
   if (idleCheckInterval) return
   idleCheckInterval = setInterval(() => {
     if (!activeEntry || activeEntry.paused) return
-    if (isIdle()) {
-      pauseEntry('idle')
-      onIdleCallback?.()
+    try {
+      const { powerMonitor } = require('electron')
+      const idleSec = powerMonitor.getSystemIdleTime()
+      console.log('[idle check] idle:', idleSec + 's | threshold:', IDLE_THRESHOLD_MS / 1000 + 's')
+      if (idleSec * 1000 >= IDLE_THRESHOLD_MS) {
+        console.log('[timer] Idle detectado — disparando popup')
+        pauseEntry('idle')
+        onIdleCallback?.()
+      }
+    } catch (err) {
+      console.error('[timer] Error en idle check:', err.message)
     }
   }, IDLE_CHECK_INTERVAL_MS)
+  console.log('[timer] Idle check iniciado')
 }
 
 function stopIdleCheck() {
@@ -146,7 +122,6 @@ function getActiveEntry() {
   const startMs = new Date(activeEntry.startedAt).getTime()
   let elapsedMs = now - startMs - activeEntry.pausedMs
 
-  // Si está pausado ahora, descontamos también el tramo actual de pausa
   if (activeEntry.paused && activeEntry.pauseStart) {
     elapsedMs -= (now - activeEntry.pauseStart)
   }
@@ -157,23 +132,25 @@ function getActiveEntry() {
   }
 }
 
-function setOnIdle(fn) { onIdleCallback = fn }
-function setOnStop(fn) { onStopCallback = fn }
-
-// Cambio de tarea en la entrada activa (sin cerrar)
-function updateTaskType(taskType) {
-  if (activeEntry) activeEntry.taskType = taskType
+function recordActivity() {
+  if (activeEntry?.paused) resumeEntry()
 }
 
+function isIdle() {
+  try {
+    const { powerMonitor } = require('electron')
+    return powerMonitor.getSystemIdleTime() * 1000 >= IDLE_THRESHOLD_MS
+  } catch {
+    return false
+  }
+}
+
+function setOnIdle(fn) { onIdleCallback = fn }
+function setOnStop(fn) { onStopCallback = fn }
+function updateTaskType(taskType) { if (activeEntry) activeEntry.taskType = taskType }
+
 module.exports = {
-  startEntry,
-  stopEntry,
-  pauseEntry,
-  resumeEntry,
-  recordActivity,
-  getActiveEntry,
-  updateTaskType,
-  setOnIdle,
-  setOnStop,
-  isIdle,
+  startEntry, stopEntry, pauseEntry, resumeEntry,
+  recordActivity, getActiveEntry, updateTaskType,
+  setOnIdle, setOnStop, isIdle,
 }

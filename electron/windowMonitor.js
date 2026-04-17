@@ -1,20 +1,15 @@
 // electron/windowMonitor.js
-// Hace polling de la ventana activa del OS cada 3 segundos.
-// Cuando cambia el título, dispara el motor de reglas.
-// Si hay match → arranca/cambia timer. Si no → cierra entrada activa.
-
 const { matchWindow } = require('./ruleEngine')
-const { startEntry, stopEntry, recordActivity, getActiveEntry } = require('./timer')
+const { getActiveEntry } = require('./timer')
+const { execSync } = require('child_process')
 
 const POLL_INTERVAL_MS = 3_000
-const MIN_WINDOW_TIME_MS = 8_000 // ignora ventanas activas por menos de 8s (cambios rápidos)
+const MIN_WINDOW_TIME_MS = 8_000
 
 let pollInterval = null
 let lastTitle = null
-let titleSince = null   // timestamp desde el que el título actual está activo
-let onDetectionCallback = null  // avisa a main.js para mostrar popup
-
-const { execSync } = require('child_process')
+let titleSince = null
+let onDetectionCallback = null
 
 function getActiveWindow() {
   try {
@@ -28,53 +23,36 @@ function getActiveWindow() {
   }
 }
 
-async function loadActiveWin() {
-  return { default: getActiveWindow }
-}
-
 async function poll() {
   try {
     const win = getActiveWindow()
-    console.log('[poll] título detectado:', win?.title)
-
     if (!win) return
-
-    // Registra actividad para idle detection (si hay ventana activa, hay uso)
-    recordActivity()
 
     const title = win.title || ''
 
-    // Si el título cambió, reseteamos el temporizador de estabilidad
     if (title !== lastTitle) {
       lastTitle = title
       titleSince = Date.now()
-      return // esperamos al próximo poll para confirmar que se quedó
+      return
     }
 
-    // El título lleva menos de MIN_WINDOW_TIME_MS → todavía no reaccionamos
     if (Date.now() - titleSince < MIN_WINDOW_TIME_MS) return
 
-    // Título estable → correr el motor de reglas
     const match = matchWindow(title)
     const current = getActiveEntry()
 
     if (match) {
       const { client } = match
-      // Si ya estamos trackeando este cliente, no hacemos nada
       if (current?.clientId === client.id) return
 
-      // Nuevo cliente detectado → notificar a main.js
       onDetectionCallback?.({
         client,
         windowTitle: title,
         matchedKeywords: match.matchedKeywords,
       })
-    } else {
-      // Sin match → si había una entrada activa, la cerramos
-      if (current) {
-        stopEntry()
-      }
     }
+    // Nota: ya NO cerramos el timer automáticamente cuando no hay match.
+    // El timer solo se cierra manualmente o por idle.
   } catch (err) {
     console.error('[windowMonitor] Error en poll:', err.message)
   }

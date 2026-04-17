@@ -1,11 +1,4 @@
 // electron/main.js
-// Entry point de la app Electron.
-// Responsabilidades:
-//   - Tray icon con menú contextual
-//   - Ventana de popup de detección (BrowserWindow flotante)
-//   - IPC entre renderer y proceso principal
-//   - Coordinación de windowMonitor + timer
-
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen } = require('electron')
 const path = require('path')
 const { start: startMonitor, stop: stopMonitor } = require('./windowMonitor')
@@ -16,7 +9,9 @@ const IS_DEV = process.env.NODE_ENV === 'development'
 
 let tray = null
 let popupWindow = null
-let pendingDetection = null  // detección esperando confirmación del usuario
+let pendingDetection = null
+let lastDetectedClientId = null
+let lastDetectedWindowTitle = null
 
 // ─── App lifecycle ───────────────────────────────────────────────────
 
@@ -24,31 +19,40 @@ app.whenReady().then(() => {
   createTray()
   setupIPC()
 
-  // Callbacks del timer
   setOnIdle(() => {
-    // Mostrar popup de idle si hay ventana abierta
     if (popupWindow?.isVisible()) return
     showIdlePopup()
   })
 
-  setOnStop((entry) => {
+  setOnStop(() => {
     updateTrayTitle()
+    lastDetectedClientId = null
+    lastDetectedWindowTitle = null
   })
 
-  // Sembrar clientes de prueba en desarrollo
   if (IS_DEV) seedDevData()
 
-  // Arrancar el monitor de ventanas
   startMonitor((detection) => {
+    const active = getActiveEntry()
+
+    // Timer activo para este cliente — no hacer nada
+    if (active?.clientId === detection.client.id) return
+
+    // Timer activo para otro cliente — no interrumpir
+    if (active) return
+
+    // Misma ventana/cliente ya ignorada o pendiente — no repetir
+    if (lastDetectedClientId === detection.client.id &&
+        lastDetectedWindowTitle === detection.windowTitle) return
+
+    lastDetectedClientId = detection.client.id
+    lastDetectedWindowTitle = detection.windowTitle
     pendingDetection = detection
     showDetectionPopup(detection)
   })
 })
 
-app.on('window-all-closed', (e) => {
-  // Prevenir que la app cierre cuando se cierran las ventanas
-  e.preventDefault()
-})
+app.on('window-all-closed', (e) => e.preventDefault())
 
 app.on('before-quit', () => {
   stopMonitor()
@@ -68,9 +72,7 @@ function createTray() {
 
   tray.on('click', () => {
     const entry = getActiveEntry()
-    if (entry) {
-      showTimerPopup()
-    }
+    if (entry) showTimerPopup()
   })
 }
 
@@ -90,24 +92,16 @@ function updateTrayTitle() {
       enabled: false,
     },
     { type: 'separator' },
-    {
-      label: 'Detener timer',
-      enabled: !!entry,
-      click: () => stopEntry(),
-    },
-    {
-      label: 'Registrar tarea manual',
-      click: () => showManualEntryPopup(),
-    },
+    { label: 'Detener timer', enabled: !!entry, click: () => stopEntry() },
+    { label: 'Registrar tarea manual', click: () => showManualEntryPopup() },
     { type: 'separator' },
     { label: 'Abrir dashboard', click: () => openDashboard() },
     { type: 'separator' },
-    { label: 'Salir', click: () => { app.quit() } },
+    { label: 'Salir', click: () => app.quit() },
   ])
   tray?.setContextMenu(menu)
 }
 
-// Actualizar el título del tray cada segundo cuando el timer está activo
 setInterval(() => {
   const entry = getActiveEntry()
   if (entry && !entry.paused) updateTrayTitle()
@@ -125,7 +119,7 @@ function showDetectionPopup(detection) {
 
   popupWindow = new BrowserWindow({
     width: 320,
-    height: 260,
+    height: 320,
     x: width - 340,
     y: height - 280,
     frame: false,
@@ -144,15 +138,13 @@ function showDetectionPopup(detection) {
 
   popupWindow.loadURL(url)
 
-  // Pasar datos de la detección al renderer
   popupWindow.webContents.once('did-finish-load', () => {
-    popupWindow.webContents.send('detection:data', {
+    popupWindow?.webContents.send('detection:data', {
       ...detection,
       allClients: getAllClients(),
     })
   })
 
-  // Auto-cerrar en 15 segundos si el usuario no interactúa
   setTimeout(() => {
     if (popupWindow?.isVisible()) {
       popupWindow.close()
@@ -160,7 +152,13 @@ function showDetectionPopup(detection) {
       pendingDetection = null
     }
   }, 15_000)
+
+  popupWindow.on('closed', () => {
+    popupWindow = null
+  })
 }
+
+// ─── Popup de idle ───────────────────────────────────────────────────
 
 function showIdlePopup() {
   if (popupWindow) return
@@ -188,7 +186,6 @@ function showIdlePopup() {
 
   popupWindow.loadURL(url)
 
-  // Auto-pausar a los 30 segundos si no responde
   setTimeout(() => {
     if (popupWindow?.isVisible()) {
       pauseEntry('idle')
@@ -196,7 +193,13 @@ function showIdlePopup() {
       popupWindow = null
     }
   }, 30_000)
+
+  popupWindow.on('closed', () => {
+    popupWindow = null
+  })
 }
+
+// ─── Popup de timer activo ───────────────────────────────────────────
 
 function showTimerPopup() {
   if (popupWindow) {
@@ -231,21 +234,24 @@ function showTimerPopup() {
     popupWindow?.close()
     popupWindow = null
   })
+
+  popupWindow.on('closed', () => {
+    popupWindow = null
+  })
 }
 
 function showManualEntryPopup() {
-  // TODO: implementar en semana 2
+  // TODO: semana 2
 }
 
 function openDashboard() {
-  // TODO: abrir dashboard web en semana 3
+  // TODO: semana 3
 }
 
 // ─── IPC handlers ────────────────────────────────────────────────────
 
 function setupIPC() {
 
-  // El usuario confirmó la detección → arranca el timer
   ipcMain.handle('timer:start', (_, { clientId, clientName, taskType, windowTitle }) => {
     const entry = startEntry({ clientId, clientName, taskType, windowTitle, source: 'auto' })
     popupWindow?.close()
@@ -254,23 +260,19 @@ function setupIPC() {
     return entry
   })
 
-  // Detener timer manualmente
   ipcMain.handle('timer:stop', () => {
     return stopEntry()
   })
 
-  // Cambiar tipo de tarea sin cerrar el timer
   ipcMain.handle('timer:updateTask', (_, taskType) => {
     updateTaskType(taskType)
     return getActiveEntry()
   })
 
-  // Estado actual del timer (para polling desde renderer)
   ipcMain.handle('timer:getActive', () => {
     return getActiveEntry()
   })
 
-  // Ignorar detección
   ipcMain.handle('detection:ignore', () => {
     popupWindow?.close()
     popupWindow = null
@@ -278,7 +280,6 @@ function setupIPC() {
     return null
   })
 
-  // CRUD de clientes
   ipcMain.handle('clients:getAll', () => getAllClients())
 
   ipcMain.handle('clients:upsert', (_, client) => {
@@ -292,7 +293,7 @@ function setupIPC() {
     invalidateCache()
     return true
   })
-  // Idle popup — el usuario confirma que sigue trabajando
+
   ipcMain.handle('idle:continue', () => {
     popupWindow?.close()
     popupWindow = null
@@ -300,17 +301,9 @@ function setupIPC() {
     return true
   })
 
-  // Idle popup — el usuario confirma que no estaba trabajando
-  ipcMain.handle('idle:stop', (_, discardMinutes) => {
+  ipcMain.handle('idle:stop', () => {
     popupWindow?.close()
     popupWindow = null
-    // Descontar los minutos idle del timer
-    if (discardMinutes > 0) {
-      const entry = getActiveEntry()
-      if (entry) {
-        pauseEntry('manual')
-      }
-    }
     stopEntry()
     return true
   })
@@ -327,19 +320,15 @@ function formatDuration(totalSec) {
 }
 
 function seedDevData() {
-  const { randomUUID } = require('crypto')
   const db = require('./db')
-
   const clients = [
     { id: 'client-1', name: 'García S.A.', rate_usd: 85, keywords: ['garcia', 'garcía', 'exp-2024-047'] },
     { id: 'client-2', name: 'Martínez Hnos.', rate_usd: 70, keywords: ['martinez', 'martínez', 'escritura'] },
     { id: 'client-3', name: 'Pérez & Asociados', rate_usd: 95, keywords: ['perez', 'pérez', 'demanda-civil'] },
   ]
-
   for (const { id, name, rate_usd, keywords } of clients) {
     db.upsertClient({ id, name, rate_usd })
     db.setClientRules(id, keywords)
   }
-
   console.log('[dev] Clientes de prueba sembrados')
 }
