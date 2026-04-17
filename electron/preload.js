@@ -20,9 +20,16 @@ contextBridge.exposeInMainWorld('timebill', {
     stop: (minutes) => ipcRenderer.invoke('idle:stop', minutes),
   },
 
+  manual: {
+    startNow:  (args) => ipcRenderer.invoke('manual:startNow', args),
+    saveRetro: (args) => ipcRenderer.invoke('manual:saveRetro', args),
+    close:     ()     => ipcRenderer.invoke('manual:close'),
+    onData:    (fn)   => ipcRenderer.on('manual:data', (_, data) => fn(data)),
+  },
+
   clients: {
-    getAll:   ()           => ipcRenderer.invoke('clients:getAll'),
-    upsert:   (client)     => ipcRenderer.invoke('clients:upsert', client),
-    setRules: (clientId, keywords) => ipcRenderer.invoke('clients:setRules', { clientId, keywords }),
+    getAll:   ()                     => ipcRenderer.invoke('clients:getAll'),
+    upsert:   (client)               => ipcRenderer.invoke('clients:upsert', client),
+    setRules: (clientId, keywords)   => ipcRenderer.invoke('clients:setRules', { clientId, keywords }),
   },
 })

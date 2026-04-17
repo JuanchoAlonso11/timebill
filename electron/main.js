@@ -1,9 +1,9 @@
 // electron/main.js
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen } = require('electron')
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, globalShortcut } = require('electron')
 const path = require('path')
 const { start: startMonitor, stop: stopMonitor } = require('./windowMonitor')
 const { startEntry, stopEntry, pauseEntry, resumeEntry, getActiveEntry, updateTaskType, setOnIdle, setOnStop } = require('./timer')
-const { getAllClients, upsertClient, setClientRules } = require('./db')
+const { getAllClients, upsertClient, setClientRules, insertEntry, closeEntry } = require('./db')
 
 const IS_DEV = process.env.NODE_ENV === 'development'
 
@@ -32,16 +32,15 @@ app.whenReady().then(() => {
 
   if (IS_DEV) seedDevData()
 
+  // Atajo global para registro manual
+  globalShortcut.register('CommandOrControl+Shift+B', () => {
+    showManualEntryPopup()
+  })
+
   startMonitor((detection) => {
     const active = getActiveEntry()
-
-    // Timer activo para este cliente — no hacer nada
     if (active?.clientId === detection.client.id) return
-
-    // Timer activo para otro cliente — no interrumpir
     if (active) return
-
-    // Misma ventana/cliente ya ignorada o pendiente — no repetir
     if (lastDetectedClientId === detection.client.id &&
         lastDetectedWindowTitle === detection.windowTitle) return
 
@@ -50,6 +49,10 @@ app.whenReady().then(() => {
     pendingDetection = detection
     showDetectionPopup(detection)
   })
+})
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll()
 })
 
 app.on('window-all-closed', (e) => e.preventDefault())
@@ -93,7 +96,7 @@ function updateTrayTitle() {
     },
     { type: 'separator' },
     { label: 'Detener timer', enabled: !!entry, click: () => stopEntry() },
-    { label: 'Registrar tarea manual', click: () => showManualEntryPopup() },
+    { label: 'Registrar tarea manual  Ctrl+Shift+B', click: () => showManualEntryPopup() },
     { type: 'separator' },
     { label: 'Abrir dashboard', click: () => openDashboard() },
     { type: 'separator' },
@@ -121,7 +124,7 @@ function showDetectionPopup(detection) {
     width: 320,
     height: 320,
     x: width - 340,
-    y: height - 280,
+    y: height - 340,
     frame: false,
     alwaysOnTop: true,
     resizable: false,
@@ -240,8 +243,46 @@ function showTimerPopup() {
   })
 }
 
+// ─── Popup de registro manual ─────────────────────────────────────────
+
 function showManualEntryPopup() {
-  // TODO: semana 2
+  if (popupWindow) {
+    popupWindow.focus()
+    return
+  }
+
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize
+
+  popupWindow = new BrowserWindow({
+    width: 320,
+    height: 360,
+    x: width - 340,
+    y: height - 380,
+    frame: false,
+    alwaysOnTop: true,
+    resizable: false,
+    skipTaskbar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+    },
+  })
+
+  const url = IS_DEV
+    ? 'http://localhost:5173/manual'
+    : `file://${path.join(__dirname, '../dist/manual.html')}`
+
+  popupWindow.loadURL(url)
+
+  popupWindow.webContents.once('did-finish-load', () => {
+    popupWindow?.webContents.send('manual:data', {
+      allClients: getAllClients(),
+    })
+  })
+
+  popupWindow.on('closed', () => {
+    popupWindow = null
+  })
 }
 
 function openDashboard() {
@@ -306,6 +347,38 @@ function setupIPC() {
     popupWindow = null
     stopEntry()
     return true
+  })
+
+  // Registro manual — arranca timer desde ahora
+  ipcMain.handle('manual:startNow', (_, { clientId, clientName, taskType }) => {
+    const entry = startEntry({ clientId, clientName, taskType, windowTitle: null, source: 'manual' })
+    popupWindow?.close()
+    popupWindow = null
+    return entry
+  })
+
+  // Registro manual — entrada retroactiva (empecé hace X minutos)
+  ipcMain.handle('manual:saveRetro', (_, { clientId, taskType, minutesAgo }) => {
+    const { randomUUID } = require('crypto')
+    const now = Date.now()
+    const startedAt = new Date(now - minutesAgo * 60 * 1000).toISOString()
+    const endedAt = new Date(now).toISOString()
+    const durationSec = minutesAgo * 60
+    const id = randomUUID()
+
+    insertEntry({ id, client_id: clientId, task_type: taskType, started_at: startedAt, window_title: null, source: 'manual' })
+    closeEntry({ id, ended_at: endedAt, duration_sec: durationSec })
+
+    popupWindow?.close()
+    popupWindow = null
+    console.log('[manual] Entrada retroactiva guardada:', minutesAgo, 'minutos')
+    return true
+  })
+
+  ipcMain.handle('manual:close', () => {
+    popupWindow?.close()
+    popupWindow = null
+    return null
   })
 }
 
