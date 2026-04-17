@@ -1,9 +1,11 @@
 // electron/main.js
+require('dotenv').config()
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, globalShortcut } = require('electron')
 const path = require('path')
 const { start: startMonitor, stop: stopMonitor } = require('./windowMonitor')
 const { startEntry, stopEntry, pauseEntry, resumeEntry, getActiveEntry, updateTaskType, setOnIdle, setOnStop } = require('./timer')
 const { getAllClients, upsertClient, setClientRules, insertEntry, closeEntry } = require('./db')
+const { start: startSync, stop: stopSync, syncNow } = require('./sync')
 
 const IS_DEV = process.env.NODE_ENV === 'development'
 
@@ -33,6 +35,8 @@ app.whenReady().then(() => {
 
   if (IS_DEV) seedDevData()
 
+  startSync()
+
   globalShortcut.register('CommandOrControl+Shift+B', () => {
     showManualEntryPopup()
   })
@@ -59,6 +63,7 @@ app.on('window-all-closed', (e) => e.preventDefault())
 
 app.on('before-quit', () => {
   stopMonitor()
+  stopSync()
   stopEntry()
 })
 
