@@ -14,6 +14,7 @@ export default defineConfig({
         tray:   resolve(__dirname, 'renderer/tray.html'),
         idle:   resolve(__dirname, 'renderer/idle.html'),
         manual: resolve(__dirname, 'renderer/manual.html'),
+        config: resolve(__dirname, 'renderer/config.html'),
       },
     },
   },

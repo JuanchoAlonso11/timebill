@@ -9,6 +9,7 @@ const IS_DEV = process.env.NODE_ENV === 'development'
 
 let tray = null
 let popupWindow = null
+let configWindow = null
 let pendingDetection = null
 let lastDetectedClientId = null
 let lastDetectedWindowTitle = null
@@ -32,7 +33,6 @@ app.whenReady().then(() => {
 
   if (IS_DEV) seedDevData()
 
-  // Atajo global para registro manual
   globalShortcut.register('CommandOrControl+Shift+B', () => {
     showManualEntryPopup()
   })
@@ -97,6 +97,8 @@ function updateTrayTitle() {
     { type: 'separator' },
     { label: 'Detener timer', enabled: !!entry, click: () => stopEntry() },
     { label: 'Registrar tarea manual  Ctrl+Shift+B', click: () => showManualEntryPopup() },
+    { type: 'separator' },
+    { label: 'Configurar clientes', click: () => showConfigWindow() },
     { type: 'separator' },
     { label: 'Abrir dashboard', click: () => openDashboard() },
     { type: 'separator' },
@@ -285,6 +287,49 @@ function showManualEntryPopup() {
   })
 }
 
+// ─── Ventana de configuración ─────────────────────────────────────────
+
+function showConfigWindow() {
+  if (configWindow) {
+    configWindow.focus()
+    return
+  }
+
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize
+
+  configWindow = new BrowserWindow({
+    width: 520,
+    height: 420,
+    x: Math.round((width - 520) / 2),
+    y: Math.round((height - 420) / 2),
+    frame: true,
+    title: 'TimeBill — Configurar clientes',
+    resizable: false,
+    skipTaskbar: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+    },
+  })
+
+  const url = IS_DEV
+    ? 'http://localhost:5173/config'
+    : `file://${path.join(__dirname, '../dist/config.html')}`
+
+  configWindow.loadURL(url)
+  configWindow.setMenuBarVisibility(false)
+
+  configWindow.webContents.once('did-finish-load', () => {
+    configWindow?.webContents.send('config:data', {
+      clients: getAllClients(),
+    })
+  })
+
+  configWindow.on('closed', () => {
+    configWindow = null
+  })
+}
+
 function openDashboard() {
   // TODO: semana 3
 }
@@ -349,7 +394,6 @@ function setupIPC() {
     return true
   })
 
-  // Registro manual — arranca timer desde ahora
   ipcMain.handle('manual:startNow', (_, { clientId, clientName, taskType }) => {
     const entry = startEntry({ clientId, clientName, taskType, windowTitle: null, source: 'manual' })
     popupWindow?.close()
@@ -357,7 +401,6 @@ function setupIPC() {
     return entry
   })
 
-  // Registro manual — entrada retroactiva (empecé hace X minutos)
   ipcMain.handle('manual:saveRetro', (_, { clientId, taskType, minutesAgo }) => {
     const { randomUUID } = require('crypto')
     const now = Date.now()
@@ -365,10 +408,8 @@ function setupIPC() {
     const endedAt = new Date(now).toISOString()
     const durationSec = minutesAgo * 60
     const id = randomUUID()
-
     insertEntry({ id, client_id: clientId, task_type: taskType, started_at: startedAt, window_title: null, source: 'manual' })
     closeEntry({ id, ended_at: endedAt, duration_sec: durationSec })
-
     popupWindow?.close()
     popupWindow = null
     console.log('[manual] Entrada retroactiva guardada:', minutesAgo, 'minutos')
@@ -379,6 +420,23 @@ function setupIPC() {
     popupWindow?.close()
     popupWindow = null
     return null
+  })
+
+  // Config de clientes
+  ipcMain.handle('config:getClients', () => {
+    return getAllClients()
+  })
+
+  ipcMain.handle('config:saveClient', (_, { id, name, rate_usd }) => {
+    upsertClient({ id, name, rate_usd })
+    return true
+  })
+
+  ipcMain.handle('config:setKeywords', (_, { clientId, keywords }) => {
+    setClientRules(clientId, keywords)
+    const { invalidateCache } = require('./ruleEngine')
+    invalidateCache()
+    return true
   })
 }
 

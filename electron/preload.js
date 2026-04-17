@@ -27,6 +27,13 @@ contextBridge.exposeInMainWorld('timebill', {
     onData:    (fn)   => ipcRenderer.on('manual:data', (_, data) => fn(data)),
   },
 
+  config: {
+    getClients:  ()                     => ipcRenderer.invoke('config:getClients'),
+    saveClient:  (client)               => ipcRenderer.invoke('config:saveClient', client),
+    setKeywords: (clientId, keywords)   => ipcRenderer.invoke('config:setKeywords', { clientId, keywords }),
+    onData:      (fn)                   => ipcRenderer.on('config:data', (_, data) => fn(data)),
+  },
+
   clients: {
     getAll:   ()                     => ipcRenderer.invoke('clients:getAll'),
     upsert:   (client)               => ipcRenderer.invoke('clients:upsert', client),
