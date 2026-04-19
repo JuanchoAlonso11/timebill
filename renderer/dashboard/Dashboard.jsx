@@ -9,7 +9,6 @@ function toISODate(d) {
 function rangeFor(key) {
   const today = new Date()
   const y = today.getFullYear(), m = today.getMonth(), d = today.getDate()
-
   if (key === 'hoy') {
     return {
       from: new Date(y, m, d, 0, 0, 0).toISOString(),
@@ -17,7 +16,7 @@ function rangeFor(key) {
     }
   }
   if (key === 'semana') {
-    const dow = today.getDay() === 0 ? 6 : today.getDay() - 1 // lunes = 0
+    const dow = today.getDay() === 0 ? 6 : today.getDay() - 1
     const mon = new Date(y, m, d - dow, 0, 0, 0)
     const sun = new Date(y, m, d - dow + 6, 23, 59, 59)
     return { from: mon.toISOString(), to: sun.toISOString() }
@@ -43,21 +42,17 @@ function fmtDuration(sec) {
 
 function fmtTime(iso) {
   if (!iso) return '—'
-  const d = new Date(iso)
-  return d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+  return new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
 }
 
 function fmtDate(iso) {
   if (!iso) return '—'
-  const d = new Date(iso)
-  return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })
+  return new Date(iso).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })
 }
 
 function fmtAmount(sec, rateUsd) {
   if (!sec || !rateUsd) return '—'
-  const hours = sec / 3600
-  const total = hours * rateUsd
-  return `$${total.toFixed(0)} USD`
+  return `$${((sec / 3600) * rateUsd).toFixed(0)} USD`
 }
 
 function totalSec(entries) {
@@ -81,44 +76,47 @@ const RANGE_TABS = [
 ]
 
 export default function Dashboard() {
-  const [tab, setTab]           = useState('hoy')
-  const [customFrom, setFrom]   = useState(toISODate(new Date()))
-  const [customTo, setTo]       = useState(toISODate(new Date()))
-  const [entries, setEntries]   = useState([])
-  const [clients, setClients]   = useState([])
+  const [tab, setTab]         = useState('hoy')
+  const [customFrom, setFrom] = useState(toISODate(new Date()))
+  const [customTo, setTo]     = useState(toISODate(new Date()))
+  const [entries, setEntries] = useState([])
+  const [clients, setClients] = useState([])
   const [activeClient, setActiveClient] = useState('all')
-  const [loading, setLoading]   = useState(true)
+  const [loading, setLoading]     = useState(true)
+  const [generating, setGenerating] = useState(false)
+  const [reportResult, setReportResult] = useState(null)
+
+  const getRange = useCallback(() => {
+    if (tab === 'custom') {
+      return {
+        from: new Date(customFrom + 'T00:00:00').toISOString(),
+        to:   new Date(customTo   + 'T23:59:59').toISOString(),
+      }
+    }
+    return rangeFor(tab)
+  }, [tab, customFrom, customTo])
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      let from, to
-      if (tab === 'custom') {
-        from = new Date(customFrom + 'T00:00:00').toISOString()
-        to   = new Date(customTo   + 'T23:59:59').toISOString()
-      } else {
-        const r = rangeFor(tab)
-        from = r.from
-        to   = r.to
-      }
+      const { from, to } = getRange()
       const data = await window.timebill.dashboard.getData(from, to)
       setEntries(data.entries || [])
       setClients(data.clients || [])
     } catch (e) {
-      console.error('[dashboard] Error cargando datos:', e)
+      console.error('[dashboard] Error:', e)
     } finally {
       setLoading(false)
     }
-  }, [tab, customFrom, customTo])
+  }, [getRange])
 
   useEffect(() => { load() }, [load])
 
-  // Filtrar por cliente seleccionado
+  // Datos derivados
   const filtered = activeClient === 'all'
     ? entries
     : entries.filter(e => e.client_id === activeClient)
 
-  // Totales por cliente para sidebar
   const byClient = clients.map(c => {
     const ces = entries.filter(e => e.client_id === c.id)
     return { ...c, entries: ces, totalSec: totalSec(ces), totalAmt: totalAmount(ces) }
@@ -127,9 +125,53 @@ export default function Dashboard() {
   const globalSec = totalSec(filtered)
   const globalAmt = totalAmount(filtered)
 
+  // ─── Reporte ────────────────────────────────────────────────────────────────
+
+  const generateReport = async () => {
+    if (activeClient === 'all' || filtered.length === 0) return
+    setGenerating(true)
+    try {
+      const { from, to } = getRange()
+      const client = clients.find(c => c.id === activeClient)
+      const result = await window.timebill.report.generate({
+        entries: filtered,
+        clientName: client?.name || activeClient,
+        from,
+        to,
+      })
+      setReportResult(result)
+    } catch (e) {
+      console.error('[report] Error:', e)
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const saveReport = async () => {
+    if (!reportResult) return
+    await window.timebill.report.save({ filePath: reportResult.filePath, fileName: reportResult.fileName })
+  }
+
+  const sendWhatsApp = () => {
+    if (!reportResult) return
+    const client = clients.find(c => c.id === activeClient)
+    const h = Math.floor(globalSec / 3600)
+    const m = Math.floor((globalSec % 3600) / 60)
+    const hoursStr = h > 0 ? `${h}h ${m}m` : `${m}m`
+    const message =
+      `Hola! Te comparto el resumen de horas trabajadas:\n\n` +
+      `📋 *${client?.name || activeClient}*\n` +
+      `🕐 Total: ${hoursStr}\n` +
+      `💵 Importe: $${globalAmt.toFixed(2)} USD\n\n` +
+      `Te envío el informe detallado en PDF.`
+    window.timebill.report.whatsapp({ message })
+  }
+
+  // ─── Render ─────────────────────────────────────────────────────────────────
+
   return (
     <div className="app">
-      {/* ─── Topbar ─────────────────────────────────── */}
+      {/* Topbar */}
       <header className="topbar">
         <div className="topbar-left">
           <span className="logo">TimeBill</span>
@@ -145,19 +187,9 @@ export default function Dashboard() {
           </div>
           {tab === 'custom' && (
             <div className="custom-range">
-              <input
-                type="date"
-                className="date-input"
-                value={customFrom}
-                onChange={e => setFrom(e.target.value)}
-              />
+              <input type="date" className="date-input" value={customFrom} onChange={e => setFrom(e.target.value)} />
               <span className="date-sep">→</span>
-              <input
-                type="date"
-                className="date-input"
-                value={customTo}
-                onChange={e => setTo(e.target.value)}
-              />
+              <input type="date" className="date-input" value={customTo}   onChange={e => setTo(e.target.value)} />
             </div>
           )}
         </div>
@@ -167,7 +199,7 @@ export default function Dashboard() {
       </header>
 
       <div className="content">
-        {/* ─── Sidebar ──────────────────────────────── */}
+        {/* Sidebar */}
         <aside className="sidebar">
           <div className="sidebar-label">Clientes</div>
 
@@ -201,7 +233,7 @@ export default function Dashboard() {
           ))}
         </aside>
 
-        {/* ─── Main ─────────────────────────────────── */}
+        {/* Main */}
         <main className="main">
           {/* Summary bar */}
           <div className="summary-bar">
@@ -219,7 +251,39 @@ export default function Dashboard() {
               <span className="summary-label">Entradas</span>
               <span className="summary-value">{filtered.length}</span>
             </div>
+            {activeClient !== 'all' && (
+              <>
+                <div className="summary-bar-sep" />
+                <button
+                  className={`report-btn${generating ? ' report-btn-loading' : ''}`}
+                  onClick={generateReport}
+                  disabled={generating || filtered.length === 0}
+                >
+                  {generating ? '⏳ Generando…' : '📄 Generar reporte'}
+                </button>
+              </>
+            )}
           </div>
+
+          {/* Modal reporte */}
+          {reportResult && (
+            <div className="report-modal-overlay" onClick={() => setReportResult(null)}>
+              <div className="report-modal" onClick={e => e.stopPropagation()}>
+                <div className="report-modal-icon">✅</div>
+                <div className="report-modal-title">Reporte generado</div>
+                <div className="report-modal-file">{reportResult.fileName}</div>
+                <div className="report-modal-actions">
+                  <button className="report-action-btn report-action-save" onClick={saveReport}>
+                    💾 Guardar PDF
+                  </button>
+                  <button className="report-action-btn report-action-wa" onClick={sendWhatsApp}>
+                    💬 Enviar por WhatsApp
+                  </button>
+                </div>
+                <button className="report-modal-close" onClick={() => setReportResult(null)}>Cerrar</button>
+              </div>
+            </div>
+          )}
 
           {/* Tabla */}
           <div className="table-wrap">

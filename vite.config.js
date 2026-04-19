@@ -16,6 +16,7 @@ export default defineConfig({
         manual:    resolve(__dirname, 'renderer/manual.html'),
         config:    resolve(__dirname, 'renderer/config.html'),
         dashboard: resolve(__dirname, 'renderer/dashboard.html'),
+        report:    resolve(__dirname, 'renderer/report.html'),
       },
     },
   },

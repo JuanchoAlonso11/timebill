@@ -14,6 +14,7 @@ let popupWindow = null
 let configWindow = null
 let dashboardWindow = null
 let pendingDetection = null
+let pendingReportData = null
 let lastDetectedClientId = null
 let lastDetectedWindowTitle = null
 
@@ -465,6 +466,70 @@ function setupIPC() {
     const entries = getEntriesInRange(from, to)
     const clients = getAllClients()
     return { entries, clients }
+  })
+
+  ipcMain.handle('report:getData', () => {
+    return pendingReportData
+  })
+
+  ipcMain.handle('report:generate', async (_, { entries, clientName, from, to }) => {
+    pendingReportData = { entries, clientName, from, to }
+
+    const reportWin = new BrowserWindow({
+      width: 794,
+      height: 1123,
+      show: false,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        contextIsolation: true,
+      },
+    })
+
+    const url = IS_DEV
+      ? 'http://localhost:5173/report'
+      : `file://${path.join(__dirname, '../dist/report.html')}`
+
+    await reportWin.loadURL(url)
+    await new Promise(r => setTimeout(r, 900))
+
+    const pdfData = await reportWin.webContents.printToPDF({
+      printBackground: true,
+      pageSize: 'A4',
+      margins: { marginType: 'none' },
+    })
+
+    reportWin.close()
+
+    const os  = require('os')
+    const fs  = require('fs')
+    const safe = clientName.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ]/g, '_')
+    const dateStr = from.slice(0, 10)
+    const fileName = `TimeBill_${safe}_${dateStr}.pdf`
+    const tempPath = path.join(os.tmpdir(), fileName)
+    fs.writeFileSync(tempPath, pdfData)
+
+    return { filePath: tempPath, fileName }
+  })
+
+  ipcMain.handle('report:save', async (_, { filePath: sourcePath, fileName }) => {
+    const { dialog, shell } = require('electron')
+    const result = await dialog.showSaveDialog(dashboardWindow, {
+      defaultPath: fileName,
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    })
+    if (!result.canceled && result.filePath) {
+      const fs = require('fs')
+      fs.copyFileSync(sourcePath, result.filePath)
+      shell.openPath(result.filePath)
+      return result.filePath
+    }
+    return null
+  })
+
+  ipcMain.handle('report:whatsapp', (_, { message }) => {
+    const { shell } = require('electron')
+    shell.openExternal(`https://wa.me/?text=${encodeURIComponent(message)}`)
+    return true
   })
 
   // Config de clientes

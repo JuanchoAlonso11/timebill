@@ -38,6 +38,13 @@ contextBridge.exposeInMainWorld('timebill', {
     getData: (from, to) => ipcRenderer.invoke('dashboard:getData', { from, to }),
   },
 
+  report: {
+    getData:   ()       => ipcRenderer.invoke('report:getData'),
+    generate:  (args)   => ipcRenderer.invoke('report:generate', args),
+    save:      (args)   => ipcRenderer.invoke('report:save', args),
+    whatsapp:  (args)   => ipcRenderer.invoke('report:whatsapp', args),
+  },
+
   clients: {
     getAll:   ()                     => ipcRenderer.invoke('clients:getAll'),
     upsert:   (client)               => ipcRenderer.invoke('clients:upsert', client),

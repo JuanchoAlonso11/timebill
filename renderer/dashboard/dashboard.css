@@ -356,6 +356,107 @@ tbody tr:last-child td { border-bottom: none; }
   letter-spacing: .08em;
 }
 
+/* ─── Reporte ─────────────────────────────────────── */
+
+.report-btn {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-hi);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius);
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: opacity .15s;
+  white-space: nowrap;
+}
+.report-btn:hover { opacity: .85; }
+.report-btn:disabled { opacity: .4; cursor: not-allowed; }
+.report-btn-loading { opacity: .7; }
+
+.report-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.report-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 28px 32px;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.report-modal-icon { font-size: 28px; margin-bottom: 4px; }
+
+.report-modal-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-hi);
+}
+
+.report-modal-file {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: center;
+  word-break: break-all;
+  margin-bottom: 8px;
+}
+
+.report-modal-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.report-action-btn {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 9px 16px;
+  border-radius: var(--radius);
+  border: none;
+  cursor: pointer;
+  transition: opacity .15s;
+  width: 100%;
+}
+.report-action-btn:hover { opacity: .85; }
+
+.report-action-save {
+  background: var(--accent);
+  color: #fff;
+}
+
+.report-action-wa {
+  background: #1a7d3e;
+  color: #fff;
+}
+
+.report-modal-close {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  margin-top: 4px;
+  padding: 4px 8px;
+}
+.report-modal-close:hover { color: var(--text); }
+
 /* ─── Scrollbar ───────────────────────────────────── */
 
 ::-webkit-scrollbar { width: 5px; }
