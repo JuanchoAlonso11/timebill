@@ -34,6 +34,10 @@ contextBridge.exposeInMainWorld('timebill', {
     onData:      (fn)                   => ipcRenderer.on('config:data', (_, data) => fn(data)),
   },
 
+  dashboard: {
+    getData: (from, to) => ipcRenderer.invoke('dashboard:getData', { from, to }),
+  },
+
   clients: {
     getAll:   ()                     => ipcRenderer.invoke('clients:getAll'),
     upsert:   (client)               => ipcRenderer.invoke('clients:upsert', client),

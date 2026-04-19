@@ -118,6 +118,21 @@ function closeEntry({ id, ended_at, duration_sec }) {
   `).run({ id, ended_at, duration_sec })
 }
 
+function getEntriesInRange(fromDate, toDate) {
+  return getDb().prepare(`
+    SELECT
+      te.*,
+      c.name  AS client_name,
+      c.rate_usd
+    FROM time_entries te
+    LEFT JOIN clients c ON c.id = te.client_id
+    WHERE te.started_at >= ?
+      AND te.started_at <= ?
+      AND te.ended_at IS NOT NULL
+    ORDER BY te.started_at DESC
+  `).all(fromDate, toDate)
+}
+
 function getEntriesForClient(clientId, fromDate, toDate) {
   return getDb().prepare(`
     SELECT * FROM time_entries
@@ -154,6 +169,7 @@ module.exports = {
   setClientRules,
   insertEntry,
   closeEntry,
+  getEntriesInRange,
   getEntriesForClient,
   getUnsyncedEntries,
   markEntriesSynced

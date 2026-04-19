@@ -4,7 +4,7 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, globalShor
 const path = require('path')
 const { start: startMonitor, stop: stopMonitor } = require('./windowMonitor')
 const { startEntry, stopEntry, pauseEntry, resumeEntry, getActiveEntry, updateTaskType, setOnIdle, setOnStop } = require('./timer')
-const { getAllClients, upsertClient, setClientRules, insertEntry, closeEntry } = require('./db')
+const { getAllClients, upsertClient, setClientRules, insertEntry, closeEntry, getEntriesInRange } = require('./db')
 const { start: startSync, stop: stopSync, syncNow } = require('./sync')
 
 const IS_DEV = process.env.NODE_ENV === 'development'
@@ -12,6 +12,7 @@ const IS_DEV = process.env.NODE_ENV === 'development'
 let tray = null
 let popupWindow = null
 let configWindow = null
+let dashboardWindow = null
 let pendingDetection = null
 let lastDetectedClientId = null
 let lastDetectedWindowTitle = null
@@ -336,7 +337,40 @@ function showConfigWindow() {
 }
 
 function openDashboard() {
-  // TODO: semana 3
+  if (dashboardWindow) {
+    dashboardWindow.focus()
+    return
+  }
+
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize
+
+  dashboardWindow = new BrowserWindow({
+    width: 900,
+    height: 640,
+    x: Math.round((width - 900) / 2),
+    y: Math.round((height - 640) / 2),
+    frame: true,
+    title: 'TimeBill — Dashboard',
+    resizable: true,
+    minWidth: 720,
+    minHeight: 500,
+    skipTaskbar: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+    },
+  })
+
+  const url = IS_DEV
+    ? 'http://localhost:5173/dashboard'
+    : `file://${path.join(__dirname, '../dist/dashboard.html')}`
+
+  dashboardWindow.loadURL(url)
+  dashboardWindow.setMenuBarVisibility(false)
+
+  dashboardWindow.on('closed', () => {
+    dashboardWindow = null
+  })
 }
 
 // ─── IPC handlers ────────────────────────────────────────────────────
@@ -425,6 +459,12 @@ function setupIPC() {
     popupWindow?.close()
     popupWindow = null
     return null
+  })
+
+  ipcMain.handle('dashboard:getData', (_, { from, to }) => {
+    const entries = getEntriesInRange(from, to)
+    const clients = getAllClients()
+    return { entries, clients }
   })
 
   // Config de clientes
