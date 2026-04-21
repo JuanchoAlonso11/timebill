@@ -14,6 +14,7 @@ let popupWindow = null
 let configWindow = null
 let dashboardWindow = null
 let loginWindow = null
+let mainWindow = null
 let pendingDetection = null
 let pendingReportData = null
 let supabaseClient = null
@@ -36,6 +37,7 @@ function startApp(user) {
   setUserId(user.id)
 
   createTray()
+  showMainWindow()
 
   setOnIdle(() => {
     if (popupWindow?.isVisible()) return
@@ -101,7 +103,7 @@ function showLoginWindow() {
   })
 
   const url = IS_DEV
-    ? 'http://localhost:5173/login'
+    ? 'http://localhost:5173/login.html'
     : `file://${path.join(__dirname, '../dist/login.html')}`
 
   loginWindow.loadURL(url)
@@ -110,6 +112,39 @@ function showLoginWindow() {
   loginWindow.on('closed', () => {
     loginWindow = null
     if (!currentUser) app.quit()
+  })
+}
+
+function showMainWindow() {
+  if (mainWindow) {
+    mainWindow.isMinimized() ? mainWindow.restore() : mainWindow.focus()
+    return
+  }
+
+  mainWindow = new BrowserWindow({
+    width: 340,
+    height: 520,
+    minWidth: 280,
+    minHeight: 420,
+    frame: true,
+    title: 'TimeBill',
+    resizable: true,
+    skipTaskbar: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+    },
+  })
+
+  const url = IS_DEV
+    ? 'http://localhost:5173/main-window.html'
+    : `file://${path.join(__dirname, '../dist/main-window.html')}`
+
+  mainWindow.loadURL(url)
+  mainWindow.setMenuBarVisibility(false)
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
   })
 }
 
@@ -125,8 +160,9 @@ function createTray() {
   updateTrayTitle()
 
   tray.on('click', () => {
-    const entry = getActiveEntry()
-    if (entry) showTimerPopup()
+    if (mainWindow) {
+      mainWindow.isMinimized() ? mainWindow.restore() : mainWindow.focus()
+    }
   })
 }
 
@@ -139,23 +175,6 @@ function updateTrayTitle() {
   } else {
     tray?.setTitle('')
   }
-
-  const menu = Menu.buildFromTemplate([
-    {
-      label: entry ? `${entry.clientName} · ${formatDuration(entry.elapsedSec)}` : 'Sin actividad',
-      enabled: false,
-    },
-    { type: 'separator' },
-    { label: 'Detener timer', enabled: !!entry, click: () => stopEntry() },
-    { label: 'Registrar tarea manual  Ctrl+Shift+B', click: () => showManualEntryPopup() },
-    { type: 'separator' },
-    { label: 'Configurar clientes', click: () => showConfigWindow() },
-    { type: 'separator' },
-    { label: 'Abrir dashboard', click: () => openDashboard() },
-    { type: 'separator' },
-    { label: 'Salir', click: () => app.quit() },
-  ])
-  tray?.setContextMenu(menu)
 }
 
 setInterval(() => {
@@ -189,7 +208,7 @@ function showDetectionPopup(detection) {
   })
 
   const url = IS_DEV
-    ? 'http://localhost:5173/popup'
+    ? 'http://localhost:5173/popup.html'
     : `file://${path.join(__dirname, '../dist/popup.html')}`
 
   popupWindow.loadURL(url)
@@ -237,7 +256,7 @@ function showIdlePopup() {
   })
 
   const url = IS_DEV
-    ? 'http://localhost:5173/idle'
+    ? 'http://localhost:5173/idle.html'
     : `file://${path.join(__dirname, '../dist/idle.html')}`
 
   popupWindow.loadURL(url)
@@ -281,7 +300,7 @@ function showTimerPopup() {
   })
 
   const url = IS_DEV
-    ? 'http://localhost:5173/tray'
+    ? 'http://localhost:5173/tray.html'
     : `file://${path.join(__dirname, '../dist/tray.html')}`
 
   popupWindow.loadURL(url)
@@ -322,7 +341,7 @@ function showManualEntryPopup() {
   })
 
   const url = IS_DEV
-    ? 'http://localhost:5173/manual'
+    ? 'http://localhost:5173/manual.html'
     : `file://${path.join(__dirname, '../dist/manual.html')}`
 
   popupWindow.loadURL(url)
@@ -364,7 +383,7 @@ function showConfigWindow() {
   })
 
   const url = IS_DEV
-    ? 'http://localhost:5173/config'
+    ? 'http://localhost:5173/config.html'
     : `file://${path.join(__dirname, '../dist/config.html')}`
 
   configWindow.loadURL(url)
@@ -407,7 +426,7 @@ function openDashboard() {
   })
 
   const url = IS_DEV
-    ? 'http://localhost:5173/dashboard'
+    ? 'http://localhost:5173/dashboard.html'
     : `file://${path.join(__dirname, '../dist/dashboard.html')}`
 
   dashboardWindow.loadURL(url)
@@ -421,6 +440,22 @@ function openDashboard() {
 // ─── IPC handlers ────────────────────────────────────────────────────
 
 function setupIPC() {
+
+  ipcMain.handle('app:quit', () => {
+    app.quit()
+  })
+
+  ipcMain.handle('app:openDashboard', () => {
+    openDashboard()
+  })
+
+  ipcMain.handle('app:openConfig', () => {
+    showConfigWindow()
+  })
+
+  ipcMain.handle('app:openManual', () => {
+    showManualEntryPopup()
+  })
 
   ipcMain.handle('timer:start', (_, { clientId, clientName, taskType, windowTitle }) => {
     const entry = startEntry({ clientId, clientName, taskType, windowTitle, source: 'auto' })
@@ -558,7 +593,7 @@ function setupIPC() {
     })
 
     const url = IS_DEV
-      ? 'http://localhost:5173/report'
+      ? 'http://localhost:5173/report.html'
       : `file://${path.join(__dirname, '../dist/report.html')}`
 
     await reportWin.loadURL(url)

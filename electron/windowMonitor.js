@@ -2,6 +2,8 @@
 const { matchWindow } = require('./ruleEngine')
 const { getActiveEntry } = require('./timer')
 const { execSync } = require('child_process')
+const path = require('path')
+const { app } = require('electron')
 
 const POLL_INTERVAL_MS = 3_000
 const MIN_WINDOW_TIME_MS = 8_000
@@ -11,11 +13,20 @@ let lastTitle = null
 let titleSince = null
 let onDetectionCallback = null
 
+function getScriptPath() {
+  // En producción el script está en resources/, en dev en la raíz del proyecto
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'getwindow.ps1')
+  }
+  return path.join(__dirname, '..', 'getwindow.ps1')
+}
+
 function getActiveWindow() {
   try {
+    const scriptPath = getScriptPath()
     const title = execSync(
-      'powershell -ExecutionPolicy Bypass -File "getwindow.ps1"',
-      { timeout: 3000, cwd: 'C:\\Users\\ASUS G14\\Desktop\\Work\\timebill' }
+      `powershell -ExecutionPolicy Bypass -File "${scriptPath}"`,
+      { timeout: 3000 }
     ).toString().trim()
     return title ? { title } : null
   } catch {

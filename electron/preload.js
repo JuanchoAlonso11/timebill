@@ -40,6 +40,13 @@ contextBridge.exposeInMainWorld('timebill', {
     getUser: ()                => ipcRenderer.invoke('auth:getUser'),
   },
 
+  app: {
+    quit:          () => ipcRenderer.invoke('app:quit'),
+    openDashboard: () => ipcRenderer.invoke('app:openDashboard'),
+    openConfig:    () => ipcRenderer.invoke('app:openConfig'),
+    openManual:    () => ipcRenderer.invoke('app:openManual'),
+  },
+
   dashboard: {
     getData: (from, to) => ipcRenderer.invoke('dashboard:getData', { from, to }),
   },
