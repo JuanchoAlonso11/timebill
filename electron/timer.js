@@ -2,7 +2,7 @@
 const { randomUUID } = require('crypto')
 const { insertEntry, closeEntry } = require('./db')
 
-const IDLE_THRESHOLD_MS = 30 * 1000  // 30s para testing — cambiar a 5 * 60 * 1000 en producción
+const IDLE_THRESHOLD_MS = 5 * 60 * 1000  // 5 minutos
 const IDLE_CHECK_INTERVAL_MS = 5_000  // chequea cada 5 segundos
 
 let activeEntry = null

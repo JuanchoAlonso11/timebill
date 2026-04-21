@@ -93,7 +93,7 @@ function showLoginWindow() {
     x: Math.round((width - 400) / 2),
     y: Math.round((height - 480) / 2),
     frame: true,
-    title: 'TimeBill',
+    title: 'Smart Hours',
     resizable: false,
     skipTaskbar: false,
     webPreferences: {
@@ -127,7 +127,7 @@ function showMainWindow() {
     minWidth: 280,
     minHeight: 420,
     frame: true,
-    title: 'TimeBill',
+    title: 'Smart Hours',
     resizable: true,
     skipTaskbar: false,
     webPreferences: {
@@ -156,7 +156,7 @@ function createTray() {
   ).resize({ width: 16, height: 16 })
 
   tray = new Tray(icon)
-  tray.setToolTip('TimeBill')
+  tray.setToolTip('Smart Hours')
   updateTrayTitle()
 
   tray.on('click', () => {

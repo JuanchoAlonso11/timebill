@@ -1,7 +1,7 @@
 {
-  "name": "timebill",
+  "name": "smart-hours",
   "version": "0.1.0",
-  "description": "Time tracker automático para estudios jurídicos",
+  "description": "Tracking inteligente de horas profesionales",
   "main": "electron/main.js",
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
@@ -29,11 +29,11 @@
     "wait-on": "^7.2.0"
   },
   "build": {
-    "appId": "com.timebill.app",
-    "productName": "TimeBill",
+    "appId": "com.smarthours.app",
+    "productName": "Smart Hours",
     "win": {
       "target": "nsis",
-      "icon": "assets/tray-icon.png"
+      "icon": "assets/icon-256.png"
     },
     "nsis": {
       "oneClick": false,
