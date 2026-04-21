@@ -17,6 +17,7 @@ export default defineConfig({
         config:    resolve(__dirname, 'renderer/config.html'),
         dashboard: resolve(__dirname, 'renderer/dashboard.html'),
         report:    resolve(__dirname, 'renderer/report.html'),
+        login:     resolve(__dirname, 'renderer/login.html'),
       },
     },
   },

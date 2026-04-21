@@ -1,36 +1,24 @@
 // electron/sync.js
-const { createClient } = require('@supabase/supabase-js')
 const { getUnsyncedEntries, markEntriesSynced, getAllClients } = require('./db')
 
-const SYNC_INTERVAL_MS = 30_000
+const SYNC_INTERVAL_MS        = 30_000
 const CLIENT_SYNC_INTERVAL_MS = 5 * 60_000
 
-let supabase = null
-let syncInterval = null
-let lastClientSync = 0
+let supabase        = null
+let syncInterval    = null
+let lastClientSync  = 0
+let currentUserId   = null
 
-function getSupabase() {
-  if (supabase) return supabase
+function setSupabase(client) {
+  supabase = client
+}
 
-  // Leer las vars acá adentro — ya están cargadas por dotenv en main.js
-  const url = process.env.VITE_SUPABASE_URL
-  const key = process.env.VITE_SUPABASE_ANON_KEY
-
-  console.log('[sync] URL:', url ? url.substring(0, 30) + '...' : 'undefined')
-  console.log('[sync] KEY:', key ? 'OK' : 'undefined')
-
-  if (!url || !key) {
-    console.warn('[sync] Variables de Supabase no encontradas en process.env')
-    return null
-  }
-
-  supabase = createClient(url, key)
-  return supabase
+function setUserId(uid) {
+  currentUserId = uid
 }
 
 async function syncClients() {
-  const sb = getSupabase()
-  if (!sb) return
+  if (!supabase || !currentUserId) return
 
   const now = Date.now()
   if (now - lastClientSync < CLIENT_SYNC_INTERVAL_MS) return
@@ -44,16 +32,16 @@ async function syncClients() {
     name:     c.name,
     rate_usd: c.rate_usd,
     active:   c.active === 1 || c.active === true,
+    user_id:  currentUserId,
   }))
 
-  const { error } = await sb.from('clients').upsert(rows, { onConflict: 'id' })
+  const { error } = await supabase.from('clients').upsert(rows, { onConflict: 'id' })
   if (error) { console.error('[sync] Error clientes:', error.message); return }
   console.log('[sync] Clientes sincronizados:', clients.length)
 }
 
 async function syncEntries() {
-  const sb = getSupabase()
-  if (!sb) return
+  if (!supabase || !currentUserId) return
 
   const entries = getUnsyncedEntries()
   if (entries.length === 0) return
@@ -61,13 +49,19 @@ async function syncEntries() {
   console.log('[sync] Subiendo', entries.length, 'entradas...')
 
   const rows = entries.map(e => ({
-    id: e.id, client_id: e.client_id, task_type: e.task_type,
-    started_at: e.started_at, ended_at: e.ended_at,
-    duration_sec: e.duration_sec, source: e.source,
-    window_title: e.window_title, note: e.note,
+    id:           e.id,
+    client_id:    e.client_id,
+    task_type:    e.task_type,
+    started_at:   e.started_at,
+    ended_at:     e.ended_at,
+    duration_sec: e.duration_sec,
+    source:       e.source,
+    window_title: e.window_title,
+    note:         e.note,
+    user_id:      currentUserId,
   }))
 
-  const { error } = await sb.from('time_entries').upsert(rows, { onConflict: 'id' })
+  const { error } = await supabase.from('time_entries').upsert(rows, { onConflict: 'id' })
   if (error) { console.error('[sync] Error entradas:', error.message); return }
 
   markEntriesSynced(entries.map(e => e.id))
@@ -92,8 +86,11 @@ function start() {
 
 function stop() {
   if (syncInterval) { clearInterval(syncInterval); syncInterval = null }
+  supabase = null
+  currentUserId = null
+  lastClientSync = 0
 }
 
 async function syncNow() { await runSync() }
 
-module.exports = { start, stop, syncNow }
+module.exports = { start, stop, syncNow, setSupabase, setUserId }

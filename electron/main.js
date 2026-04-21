@@ -5,7 +5,7 @@ const path = require('path')
 const { start: startMonitor, stop: stopMonitor } = require('./windowMonitor')
 const { startEntry, stopEntry, pauseEntry, resumeEntry, getActiveEntry, updateTaskType, setOnIdle, setOnStop } = require('./timer')
 const { getAllClients, upsertClient, setClientRules, insertEntry, closeEntry, getEntriesInRange } = require('./db')
-const { start: startSync, stop: stopSync, syncNow } = require('./sync')
+const { start: startSync, stop: stopSync, syncNow, setSupabase, setUserId } = require('./sync')
 
 const IS_DEV = process.env.NODE_ENV === 'development'
 
@@ -13,16 +13,29 @@ let tray = null
 let popupWindow = null
 let configWindow = null
 let dashboardWindow = null
+let loginWindow = null
 let pendingDetection = null
 let pendingReportData = null
+let supabaseClient = null
+let currentUser = null
+
+const SUPABASE_URL  = 'https://qosofkwkiujexuiptixh.supabase.co'
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFvc29ma3draXVqZXh1aXB0aXhoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0NTA2MTcsImV4cCI6MjA5MjAyNjYxN30.D_2JfMXSdXvR1oqqHZ5a0YAMJU27_qBnI8lsatvH6tQ'
 let lastDetectedClientId = null
 let lastDetectedWindowTitle = null
 
 // ─── App lifecycle ───────────────────────────────────────────────────
 
 app.whenReady().then(() => {
-  createTray()
   setupIPC()
+  showLoginWindow()
+})
+
+function startApp(user) {
+  currentUser = user
+  setUserId(user.id)
+
+  createTray()
 
   setOnIdle(() => {
     if (popupWindow?.isVisible()) return
@@ -55,7 +68,7 @@ app.whenReady().then(() => {
     pendingDetection = detection
     showDetectionPopup(detection)
   })
-})
+}
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
@@ -68,6 +81,37 @@ app.on('before-quit', () => {
   stopSync()
   stopEntry()
 })
+
+function showLoginWindow() {
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize
+
+  loginWindow = new BrowserWindow({
+    width: 400,
+    height: 480,
+    x: Math.round((width - 400) / 2),
+    y: Math.round((height - 480) / 2),
+    frame: true,
+    title: 'TimeBill',
+    resizable: false,
+    skipTaskbar: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+    },
+  })
+
+  const url = IS_DEV
+    ? 'http://localhost:5173/login'
+    : `file://${path.join(__dirname, '../dist/login.html')}`
+
+  loginWindow.loadURL(url)
+  loginWindow.setMenuBarVisibility(false)
+
+  loginWindow.on('closed', () => {
+    loginWindow = null
+    if (!currentUser) app.quit()
+  })
+}
 
 // ─── Tray ────────────────────────────────────────────────────────────
 
@@ -461,6 +505,34 @@ function setupIPC() {
     popupWindow = null
     return null
   })
+
+  ipcMain.handle('auth:login', async (_, { email, password }) => {
+    const { createClient } = require('@supabase/supabase-js')
+    supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON)
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password })
+    if (error) return { error: error.message }
+    setSupabase(supabaseClient)
+    setUserId(data.user.id)
+    loginWindow?.close()
+    loginWindow = null
+    startApp(data.user)
+    return { user: data.user }
+  })
+
+  ipcMain.handle('auth:logout', async () => {
+    if (supabaseClient) await supabaseClient.auth.signOut()
+    currentUser = null
+    stopMonitor()
+    stopSync()
+    stopEntry()
+    globalShortcut.unregisterAll()
+    tray?.destroy()
+    tray = null
+    showLoginWindow()
+    return true
+  })
+
+  ipcMain.handle('auth:getUser', () => currentUser)
 
   ipcMain.handle('dashboard:getData', (_, { from, to }) => {
     const entries = getEntriesInRange(from, to)
