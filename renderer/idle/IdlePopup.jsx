@@ -5,6 +5,10 @@ export default function IdlePopup() {
   const [idleMinutes, setIdleMinutes] = useState(5)
 
   useEffect(() => {
+    window.timebill.app.beep()
+  }, [])
+
+  useEffect(() => {
     const interval = setInterval(() => {
       setCountdown(c => {
         if (c <= 1) {

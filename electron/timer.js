@@ -89,7 +89,7 @@ function stopEntry() {
 function startIdleCheck() {
   if (idleCheckInterval) return
   idleCheckInterval = setInterval(() => {
-    if (!activeEntry || activeEntry.paused) return
+    if (!activeEntry || activeEntry.paused || idleCheckSuspended) return
     try {
       const { powerMonitor } = require('electron')
       const idleSec = powerMonitor.getSystemIdleTime()
@@ -145,6 +145,10 @@ function isIdle() {
   }
 }
 
+let idleCheckSuspended = false
+
+function suspendIdleCheck() { idleCheckSuspended = true }
+function resumeIdleCheck() { idleCheckSuspended = false }
 function setOnIdle(fn) { onIdleCallback = fn }
 function setOnStop(fn) { onStopCallback = fn }
 function updateTaskType(taskType) { if (activeEntry) activeEntry.taskType = taskType }
@@ -153,4 +157,5 @@ module.exports = {
   startEntry, stopEntry, pauseEntry, resumeEntry,
   recordActivity, getActiveEntry, updateTaskType,
   setOnIdle, setOnStop, isIdle,
+  suspendIdleCheck, resumeIdleCheck,
 }

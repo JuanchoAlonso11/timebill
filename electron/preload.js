@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('timebill', {
     openManual:      () => ipcRenderer.invoke('app:openManual'),
     openOnboarding:  () => ipcRenderer.invoke('app:openOnboarding'),
     closeOnboarding: () => ipcRenderer.invoke('app:closeOnboarding'),
+    beep:            () => ipcRenderer.invoke('app:beep'),
   },
 
   dashboard: {

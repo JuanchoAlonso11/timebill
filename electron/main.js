@@ -3,7 +3,7 @@ require('dotenv').config()
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, globalShortcut } = require('electron')
 const path = require('path')
 const { start: startMonitor, stop: stopMonitor } = require('./windowMonitor')
-const { startEntry, stopEntry, pauseEntry, resumeEntry, getActiveEntry, updateTaskType, setOnIdle, setOnStop } = require('./timer')
+const { startEntry, stopEntry, pauseEntry, resumeEntry, getActiveEntry, updateTaskType, setOnIdle, setOnStop, suspendIdleCheck, resumeIdleCheck } = require('./timer')
 const { getAllClients, upsertClient, setClientRules, insertEntry, closeEntry, getEntriesInRange } = require('./db')
 const { start: startSync, stop: stopSync, syncNow, setSupabase, setUserId } = require('./sync')
 const Store = require('electron-store')
@@ -304,8 +304,9 @@ function showIdlePopup() {
     : `file://${path.join(__dirname, '../dist/idle.html')}`
 
   popupWindow.loadURL(url)
+  suspendIdleCheck()
 
-  setTimeout(() => {
+  const idleTimeout = setTimeout(() => {
     if (popupWindow?.isVisible()) {
       pauseEntry('idle')
       popupWindow.close()
@@ -314,6 +315,8 @@ function showIdlePopup() {
   }, 30_000)
 
   popupWindow.on('closed', () => {
+    clearTimeout(idleTimeout)
+    resumeIdleCheck()
     popupWindow = null
   })
 }
@@ -484,6 +487,11 @@ function openDashboard() {
 // ─── IPC handlers ────────────────────────────────────────────────────
 
 function setupIPC() {
+
+  ipcMain.handle('app:beep', () => {
+    const { shell } = require('electron')
+    shell.beep()
+  })
 
   ipcMain.handle('app:quit', () => {
     app.quit()
