@@ -20,6 +20,7 @@ export default defineConfig(({ command }) => ({
         report:        resolve(__dirname, 'renderer/report.html'),
         login:         resolve(__dirname, 'renderer/login.html'),
         'main-window': resolve(__dirname, 'renderer/main-window.html'),
+        onboarding:    resolve(__dirname, 'renderer/onboarding.html'),
       },
     },
   },

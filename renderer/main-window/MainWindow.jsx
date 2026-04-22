@@ -51,8 +51,11 @@ export default function MainWindow() {
     <div className="app">
       {/* Header */}
       <header className="header">
-        <span className="logo">TimeBill</span>
+        <span className="logo">Smart Hours</span>
         <div className="header-actions">
+          <button className="btn-icon" onClick={() => window.timebill.app.openOnboarding()} title="Ayuda">
+            ❓
+          </button>
           <button className="btn-icon" onClick={() => window.timebill.app.openDashboard()} title="Dashboard">
             📊
           </button>

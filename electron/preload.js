@@ -41,10 +41,12 @@ contextBridge.exposeInMainWorld('timebill', {
   },
 
   app: {
-    quit:          () => ipcRenderer.invoke('app:quit'),
-    openDashboard: () => ipcRenderer.invoke('app:openDashboard'),
-    openConfig:    () => ipcRenderer.invoke('app:openConfig'),
-    openManual:    () => ipcRenderer.invoke('app:openManual'),
+    quit:            () => ipcRenderer.invoke('app:quit'),
+    openDashboard:   () => ipcRenderer.invoke('app:openDashboard'),
+    openConfig:      () => ipcRenderer.invoke('app:openConfig'),
+    openManual:      () => ipcRenderer.invoke('app:openManual'),
+    openOnboarding:  () => ipcRenderer.invoke('app:openOnboarding'),
+    closeOnboarding: () => ipcRenderer.invoke('app:closeOnboarding'),
   },
 
   dashboard: {

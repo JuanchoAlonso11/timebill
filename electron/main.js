@@ -6,6 +6,8 @@ const { start: startMonitor, stop: stopMonitor } = require('./windowMonitor')
 const { startEntry, stopEntry, pauseEntry, resumeEntry, getActiveEntry, updateTaskType, setOnIdle, setOnStop } = require('./timer')
 const { getAllClients, upsertClient, setClientRules, insertEntry, closeEntry, getEntriesInRange } = require('./db')
 const { start: startSync, stop: stopSync, syncNow, setSupabase, setUserId } = require('./sync')
+const Store = require('electron-store')
+const store = new Store()
 
 const IS_DEV = process.env.NODE_ENV === 'development'
 
@@ -15,6 +17,7 @@ let configWindow = null
 let dashboardWindow = null
 let loginWindow = null
 let mainWindow = null
+let onboardingWindow = null
 let pendingDetection = null
 let pendingReportData = null
 let supabaseClient = null
@@ -38,6 +41,12 @@ function startApp(user) {
 
   createTray()
   showMainWindow()
+
+  // Mostrar onboarding si es primera vez
+  const onboardingSeen = store.get(`onboarding-seen-${user.id}`, false)
+  if (!onboardingSeen) {
+    setTimeout(() => showOnboardingWindow(), 400)
+  }
 
   setOnIdle(() => {
     if (popupWindow?.isVisible()) return
@@ -112,6 +121,41 @@ function showLoginWindow() {
   loginWindow.on('closed', () => {
     loginWindow = null
     if (!currentUser) app.quit()
+  })
+}
+
+function showOnboardingWindow() {
+  if (onboardingWindow) {
+    onboardingWindow.focus()
+    return
+  }
+
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize
+
+  onboardingWindow = new BrowserWindow({
+    width: 480,
+    height: 540,
+    x: Math.round((width - 480) / 2),
+    y: Math.round((height - 540) / 2),
+    frame: true,
+    title: 'Smart Hours — Bienvenido',
+    resizable: false,
+    skipTaskbar: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+    },
+  })
+
+  const url = IS_DEV
+    ? 'http://localhost:5173/onboarding.html'
+    : `file://${path.join(__dirname, '../dist/onboarding.html')}`
+
+  onboardingWindow.loadURL(url)
+  onboardingWindow.setMenuBarVisibility(false)
+
+  onboardingWindow.on('closed', () => {
+    onboardingWindow = null
   })
 }
 
@@ -455,6 +499,18 @@ function setupIPC() {
 
   ipcMain.handle('app:openManual', () => {
     showManualEntryPopup()
+  })
+
+  ipcMain.handle('app:openOnboarding', () => {
+    showOnboardingWindow()
+  })
+
+  ipcMain.handle('app:closeOnboarding', () => {
+    if (currentUser) {
+      store.set(`onboarding-seen-${currentUser.id}`, true)
+    }
+    onboardingWindow?.close()
+    onboardingWindow = null
   })
 
   ipcMain.handle('timer:start', (_, { clientId, clientName, taskType, windowTitle }) => {
