@@ -4,10 +4,14 @@ const { contextBridge, ipcRenderer } = require('electron')
 contextBridge.exposeInMainWorld('timebill', {
 
   timer: {
-    start:      (args) => ipcRenderer.invoke('timer:start', args),
-    stop:       ()     => ipcRenderer.invoke('timer:stop'),
-    updateTask: (type) => ipcRenderer.invoke('timer:updateTask', type),
-    getActive:  ()     => ipcRenderer.invoke('timer:getActive'),
+    start:               (args) => ipcRenderer.invoke('timer:start', args),
+    stop:                ()     => ipcRenderer.invoke('timer:stop'),
+    updateTask:          (type) => ipcRenderer.invoke('timer:updateTask', type),
+    getActive:           ()     => ipcRenderer.invoke('timer:getActive'),
+    getThreshold:        ()     => ipcRenderer.invoke('timer:getThreshold'),
+    setThreshold:        (ms)   => ipcRenderer.invoke('timer:setThreshold', ms),
+    getReminderInterval: ()     => ipcRenderer.invoke('timer:getReminderInterval'),
+    setReminderInterval: (ms)   => ipcRenderer.invoke('timer:setReminderInterval', ms),
   },
 
   detection: {
@@ -35,9 +39,11 @@ contextBridge.exposeInMainWorld('timebill', {
   },
 
   auth: {
-    login:   (email, password) => ipcRenderer.invoke('auth:login', { email, password }),
-    logout:  ()                => ipcRenderer.invoke('auth:logout'),
-    getUser: ()                => ipcRenderer.invoke('auth:getUser'),
+    login:          (email, password) => ipcRenderer.invoke('auth:login', { email, password }),
+    logout:         ()                => ipcRenderer.invoke('auth:logout'),
+    getUser:        ()                => ipcRenderer.invoke('auth:getUser'),
+    forgotPassword: (email)           => ipcRenderer.invoke('auth:forgotPassword', email),
+    getRole:        ()                => ipcRenderer.invoke('auth:getRole'),
   },
 
   app: {
@@ -54,6 +60,10 @@ contextBridge.exposeInMainWorld('timebill', {
     getData: (from, to) => ipcRenderer.invoke('dashboard:getData', { from, to }),
   },
 
+  sync: {
+    onStatus: (fn) => ipcRenderer.on('sync:status', (_, online) => fn(online)),
+  },
+
   report: {
     getData:   ()       => ipcRenderer.invoke('report:getData'),
     generate:  (args)   => ipcRenderer.invoke('report:generate', args),
@@ -65,5 +75,6 @@ contextBridge.exposeInMainWorld('timebill', {
     getAll:   ()                     => ipcRenderer.invoke('clients:getAll'),
     upsert:   (client)               => ipcRenderer.invoke('clients:upsert', client),
     setRules: (clientId, keywords)   => ipcRenderer.invoke('clients:setRules', { clientId, keywords }),
+    delete:   (clientId)             => ipcRenderer.invoke('clients:delete', clientId),
   },
 })

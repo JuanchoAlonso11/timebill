@@ -8,6 +8,15 @@ let supabase        = null
 let syncInterval    = null
 let lastClientSync  = 0
 let currentUserId   = null
+let currentAreaId   = null
+let onStatusChange  = null
+
+function setOnStatusChange(fn) { onStatusChange = fn }
+function setAreaId(id) { currentAreaId = id }
+
+function reportStatus(online) {
+  onStatusChange?.(online)
+}
 
 function setSupabase(client) {
   supabase = client
@@ -18,7 +27,7 @@ function setUserId(uid) {
 }
 
 async function syncClients() {
-  if (!supabase || !currentUserId) return
+  if (!supabase || !currentUserId || !currentAreaId) return
 
   const now = Date.now()
   if (now - lastClientSync < CLIENT_SYNC_INTERVAL_MS) return
@@ -33,15 +42,16 @@ async function syncClients() {
     rate_usd: c.rate_usd,
     active:   c.active === 1 || c.active === true,
     user_id:  currentUserId,
+    area_id:  currentAreaId,
   }))
 
   const { error } = await supabase.from('clients').upsert(rows, { onConflict: 'id' })
-  if (error) { console.error('[sync] Error clientes:', error.message); return }
+  if (error) { console.error('[sync] Error clientes:', error.message); reportStatus(false); return }
   console.log('[sync] Clientes sincronizados:', clients.length)
 }
 
 async function syncEntries() {
-  if (!supabase || !currentUserId) return
+  if (!supabase || !currentUserId || !currentAreaId) return
 
   const entries = getUnsyncedEntries()
   if (entries.length === 0) return
@@ -59,10 +69,11 @@ async function syncEntries() {
     window_title: e.window_title,
     note:         e.note,
     user_id:      currentUserId,
+    area_id:      currentAreaId,
   }))
 
   const { error } = await supabase.from('time_entries').upsert(rows, { onConflict: 'id' })
-  if (error) { console.error('[sync] Error entradas:', error.message); return }
+  if (error) { console.error('[sync] Error entradas:', error.message); reportStatus(false); return }
 
   markEntriesSynced(entries.map(e => e.id))
   console.log('[sync] OK —', entries.length, 'entradas sincronizadas')
@@ -72,8 +83,10 @@ async function runSync() {
   try {
     await syncClients()
     await syncEntries()
+    reportStatus(true)
   } catch (err) {
     console.error('[sync] Error inesperado:', err.message)
+    reportStatus(false)
   }
 }
 
@@ -93,4 +106,6 @@ function stop() {
 
 async function syncNow() { await runSync() }
 
-module.exports = { start, stop, syncNow, setSupabase, setUserId }
+function resetClientSync() { lastClientSync = 0 }
+
+module.exports = { start, stop, syncNow, setSupabase, setUserId, setOnStatusChange, setAreaId, resetClientSync }

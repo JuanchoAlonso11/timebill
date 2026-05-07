@@ -1,11 +1,12 @@
 // electron/main.js
 require('dotenv').config()
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, globalShortcut } = require('electron')
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, globalShortcut, dialog } = require('electron')
+const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const { start: startMonitor, stop: stopMonitor } = require('./windowMonitor')
-const { startEntry, stopEntry, pauseEntry, resumeEntry, getActiveEntry, updateTaskType, setOnIdle, setOnStop, suspendIdleCheck, resumeIdleCheck } = require('./timer')
+const { startEntry, stopEntry, pauseEntry, resumeEntry, getActiveEntry, updateTaskType, setOnIdle, setOnStop, setOnReminder, suspendIdleCheck, resumeIdleCheck, setIdleThreshold, getIdleThreshold, setReminderInterval, getReminderInterval } = require('./timer')
 const { getAllClients, upsertClient, setClientRules, insertEntry, closeEntry, getEntriesInRange } = require('./db')
-const { start: startSync, stop: stopSync, syncNow, setSupabase, setUserId } = require('./sync')
+const { start: startSync, stop: stopSync, syncNow, setSupabase, setUserId, setOnStatusChange, setAreaId, resetClientSync } = require('./sync')
 const Store = require('electron-store')
 const store = new Store()
 
@@ -33,11 +34,81 @@ let lastDetectedWindowTitle = null
 app.whenReady().then(() => {
   setupIPC()
   showLoginWindow()
+
+  // Auto-update (solo en producción)
+  if (!IS_DEV) {
+    autoUpdater.checkForUpdatesAndNotify()
+
+    autoUpdater.on('update-available', () => {
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'Actualización disponible',
+        message: 'Hay una nueva versión de Smart Hours disponible. Se descargará en segundo plano.',
+        buttons: ['OK']
+      })
+    })
+
+    autoUpdater.on('update-downloaded', () => {
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'Actualización lista',
+        message: 'La actualización fue descargada. La app se reiniciará para instalarla.',
+        buttons: ['Reiniciar ahora', 'Más tarde']
+      }).then(({ response }) => {
+        if (response === 0) autoUpdater.quitAndInstall()
+      })
+    })
+
+    autoUpdater.on('error', (err) => {
+      console.error('[updater] Error:', err.message)
+    })
+  }
 })
 
 function startApp(user) {
   currentUser = user
   setUserId(user.id)
+
+  // Limpiar SQLite si el usuario es distinto al último logueado
+  const lastUserId = store.get('lastUserId', null)
+  if (lastUserId && lastUserId !== user.id) {
+    try {
+      const db = require('./db').getDb()
+      db.prepare('DELETE FROM rules').run()
+      db.prepare('DELETE FROM clients').run()
+      db.prepare('DELETE FROM time_entries').run()
+      console.log('[login] SQLite limpiado por cambio de usuario')
+    } catch (err) {
+      console.error('[login] Error limpiando SQLite:', err.message)
+    }
+  }
+  store.set('lastUserId', user.id)
+
+  // Obtener membresía guardada
+  const membership = store.get(`membership-${user.id}`, {})
+  const areaId = membership.areaId || null
+  setAreaId(areaId)
+
+  // Restaurar threshold guardado
+  const savedThreshold = store.get('idleThresholdMs', 5 * 60 * 1000)
+  setIdleThreshold(savedThreshold)
+
+  // Restaurar reminder guardado
+  const savedReminder = store.get('reminderIntervalMs', 15 * 60 * 1000)
+  setReminderInterval(savedReminder)
+
+  // Beep de recordatorio
+  setOnReminder(() => {
+    const { shell } = require('electron')
+    shell.beep()
+  })
+
+  // Notificar estado de sync al renderer
+  setOnStatusChange((online) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('sync:status', online)
+    }
+  })
 
   createTray()
   showMainWindow()
@@ -59,7 +130,7 @@ function startApp(user) {
     lastDetectedWindowTitle = null
   })
 
-  if (IS_DEV) seedDevData()
+
 
   startSync()
 
@@ -488,6 +559,22 @@ function openDashboard() {
 
 function setupIPC() {
 
+  ipcMain.handle('timer:getThreshold', () => getIdleThreshold())
+
+  ipcMain.handle('timer:setThreshold', (_, ms) => {
+    setIdleThreshold(ms)
+    store.set('idleThresholdMs', ms)
+    return true
+  })
+
+  ipcMain.handle('timer:getReminderInterval', () => getReminderInterval())
+
+  ipcMain.handle('timer:setReminderInterval', (_, ms) => {
+    setReminderInterval(ms)
+    store.set('reminderIntervalMs', ms)
+    return true
+  })
+
   ipcMain.handle('app:beep', () => {
     const { shell } = require('electron')
     shell.beep()
@@ -551,8 +638,22 @@ function setupIPC() {
 
   ipcMain.handle('clients:getAll', () => getAllClients())
 
+  ipcMain.handle('clients:delete', async (_, clientId) => {
+    const db = require('./db').getDb()
+    db.prepare('DELETE FROM rules WHERE client_id = ?').run(clientId)
+    db.prepare('DELETE FROM clients WHERE id = ?').run(clientId)
+    // Borrar también en Supabase
+    if (supabaseClient) {
+      await supabaseClient.from('rules').delete().eq('client_id', clientId)
+      await supabaseClient.from('clients').delete().eq('id', clientId)
+    }
+    return true
+  })
+
   ipcMain.handle('clients:upsert', (_, client) => {
     upsertClient(client)
+    resetClientSync()
+    syncNow()
     return getAllClients()
   })
 
@@ -609,13 +710,49 @@ function setupIPC() {
     const { createClient } = require('@supabase/supabase-js')
     supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON)
     const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password })
+    console.log('[login] auth result:', { userId: data?.user?.id, error: error?.message })
     if (error) return { error: error.message }
+
+    // Obtener membresía del usuario via función SECURITY DEFINER
+    const { data: membershipRows, error: membershipError } = await supabaseClient
+      .rpc('get_user_membership', { p_user_id: data.user.id })
+    console.log('[login] membership:', { membershipRows, error: membershipError?.message })
+
+    const membership = membershipRows?.[0]
+
+    if (membershipError || !membership) {
+      await supabaseClient.auth.signOut()
+      return { error: 'Tu cuenta no está configurada. Contactá al administrador.' }
+    }
+
+    // Verificar que la organización esté activa
+    if (membership.active_until && new Date(membership.active_until) < new Date()) {
+      await supabaseClient.auth.signOut()
+      return { error: 'La suscripción de tu organización venció. Contactá al administrador.' }
+    }
+
+    // Guardar membresía en store
+    store.set(`membership-${data.user.id}`, {
+      areaId: membership.area_id,
+      role: membership.role,
+      orgName: membership.org_name || '',
+    })
+
     setSupabase(supabaseClient)
     setUserId(data.user.id)
     loginWindow?.close()
     loginWindow = null
     startApp(data.user)
     return { user: data.user }
+  })
+
+  ipcMain.handle('auth:forgotPassword', async (_, email) => {
+    const { createClient } = require('@supabase/supabase-js')
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON)
+    const { error } = await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: 'https://smarthours-reset.netlify.app/reset-password.html',
+    })
+    return { error: error?.message ?? null }
   })
 
   ipcMain.handle('auth:logout', async () => {
@@ -627,16 +764,83 @@ function setupIPC() {
     globalShortcut.unregisterAll()
     tray?.destroy()
     tray = null
+
+    // Limpiar SQLite local al cambiar de usuario
+    try {
+      const db = require('./db').getDb()
+      db.prepare('DELETE FROM rules').run()
+      db.prepare('DELETE FROM clients').run()
+      db.prepare('DELETE FROM time_entries').run()
+      console.log('[logout] SQLite local limpiado')
+    } catch (err) {
+      console.error('[logout] Error limpiando SQLite:', err.message)
+    }
+
     showLoginWindow()
     return true
   })
 
+  ipcMain.handle('auth:getRole', () => {
+    if (!currentUser) return null
+    const membership = store.get(`membership-${currentUser.id}`, {})
+    return membership.role || null
+  })
+
   ipcMain.handle('auth:getUser', () => currentUser)
 
-  ipcMain.handle('dashboard:getData', (_, { from, to }) => {
+  ipcMain.handle('dashboard:getData', async (_, { from, to }) => {
+    const role = currentUser ? (store.get(`membership-${currentUser.id}`, {}).role || null) : null
+    const areaId = currentUser ? (store.get(`membership-${currentUser.id}`, {}).areaId || null) : null
+
+    if (role === 'admin' && supabaseClient && areaId) {
+      // Admin: traer todas las entradas del área desde Supabase
+      const { data: entries, error } = await supabaseClient
+        .from('time_entries')
+        .select('*, clients(name, rate_usd)')
+        .eq('area_id', areaId)
+        .gte('started_at', from)
+        .lte('started_at', to)
+        .not('ended_at', 'is', null)
+        .order('started_at', { ascending: false })
+
+      if (error) {
+        console.error('[dashboard] Error Supabase:', error.message)
+        // Fallback a SQLite local
+        const localEntries = getEntriesInRange(from, to)
+        const clients = getAllClients()
+        return { entries: localEntries, clients, role: 'admin' }
+      }
+
+      // Obtener lista de usuarios únicos para mostrar nombres
+      const userIds = [...new Set(entries.map(e => e.user_id).filter(Boolean))]
+      let userEmails = {}
+      if (userIds.length > 0) {
+        const { data: memberships } = await supabaseClient
+          .from('memberships')
+          .select('user_id')
+          .in('user_id', userIds)
+        // Obtener emails via auth (solo disponible con service role, usamos user_id como fallback)
+        userIds.forEach(uid => {
+          userEmails[uid] = uid === currentUser.id ? currentUser.email : `Usuario ${uid.slice(0, 8)}`
+        })
+      }
+
+      const normalizedEntries = entries.map(e => ({
+        ...e,
+        client_name: e.clients?.name || null,
+        rate_usd:    e.clients?.rate_usd || null,
+        user_email:  userEmails[e.user_id] || null,
+        is_own:      e.user_id === currentUser.id,
+      }))
+
+      const clients = getAllClients()
+      return { entries: normalizedEntries, clients, role: 'admin' }
+    }
+
+    // Employee: solo SQLite local
     const entries = getEntriesInRange(from, to)
     const clients = getAllClients()
-    return { entries, clients }
+    return { entries, clients, role: role || 'employee' }
   })
 
   ipcMain.handle('report:getData', () => {
@@ -710,6 +914,8 @@ function setupIPC() {
 
   ipcMain.handle('config:saveClient', (_, { id, name, rate_usd }) => {
     upsertClient({ id, name, rate_usd })
+    resetClientSync()
+    syncNow()
     return true
   })
 
@@ -731,16 +937,4 @@ function formatDuration(totalSec) {
   return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
 }
 
-function seedDevData() {
-  const db = require('./db')
-  const clients = [
-    { id: 'client-1', name: 'García S.A.', rate_usd: 85, keywords: ['garcia', 'garcía', 'exp-2024-047'] },
-    { id: 'client-2', name: 'Martínez Hnos.', rate_usd: 70, keywords: ['martinez', 'martínez', 'escritura'] },
-    { id: 'client-3', name: 'Pérez & Asociados', rate_usd: 95, keywords: ['perez', 'pérez', 'demanda-civil'] },
-  ]
-  for (const { id, name, rate_usd, keywords } of clients) {
-    db.upsertClient({ id, name, rate_usd })
-    db.setClientRules(id, keywords)
-  }
-  console.log('[dev] Clientes de prueba sembrados')
-}
+

@@ -7,6 +7,13 @@ export default function Login() {
   const [loading, setLoading]   = useState(false)
   const [mounted, setMounted]   = useState(false)
 
+  // forgot password
+  const [forgotMode, setForgotMode]     = useState(false)
+  const [forgotEmail, setForgotEmail]   = useState('')
+  const [forgotSent, setForgotSent]     = useState(false)
+  const [forgotLoading, setForgotLoading] = useState(false)
+  const [forgotError, setForgotError]   = useState(null)
+
   useEffect(() => {
     setTimeout(() => setMounted(true), 50)
   }, [])
@@ -17,7 +24,7 @@ export default function Login() {
     setError(null)
     try {
       const result = await window.timebill.auth.login(email, password)
-      if (result.error) setError('Email o contraseña incorrectos.')
+      if (result.error) setError(result.error)
     } catch {
       setError('Error al conectar. Intentá de nuevo.')
     } finally {
@@ -27,6 +34,35 @@ export default function Login() {
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter') handleLogin()
+  }
+
+  const handleForgot = async () => {
+    if (!forgotEmail) return
+    setForgotLoading(true)
+    setForgotError(null)
+    try {
+      const result = await window.timebill.auth.forgotPassword(forgotEmail)
+      if (result.error) {
+        setForgotError('No se pudo enviar el email. Verificá la dirección.')
+      } else {
+        setForgotSent(true)
+      }
+    } catch {
+      setForgotError('Error al conectar. Intentá de nuevo.')
+    } finally {
+      setForgotLoading(false)
+    }
+  }
+
+  const handleForgotKey = (e) => {
+    if (e.key === 'Enter') handleForgot()
+  }
+
+  const resetForgot = () => {
+    setForgotMode(false)
+    setForgotEmail('')
+    setForgotSent(false)
+    setForgotError(null)
   }
 
   return (
@@ -162,6 +198,20 @@ export default function Login() {
           margin-bottom: 16px;
         }
 
+        .success-msg {
+          display: flex;
+          align-items: flex-start;
+          gap: 8px;
+          font-size: 12px;
+          color: #3ecf8e;
+          background: rgba(62,207,142,0.06);
+          border: 1px solid rgba(62,207,142,0.15);
+          border-radius: 8px;
+          padding: 10px 12px;
+          margin-bottom: 16px;
+          line-height: 1.5;
+        }
+
         .btn {
           width: 100%;
           padding: 12px;
@@ -210,6 +260,36 @@ export default function Login() {
         }
 
         @keyframes spin { to { transform: rotate(360deg); } }
+
+        .forgot-link {
+          display: block;
+          text-align: center;
+          margin-top: 16px;
+          font-size: 12px;
+          color: #4a5060;
+          cursor: pointer;
+          transition: color .2s;
+          background: none;
+          border: none;
+          width: 100%;
+          font-family: 'DM Sans', sans-serif;
+        }
+        .forgot-link:hover { color: #4f8ef7; }
+
+        .section-title {
+          font-family: 'Syne', sans-serif;
+          font-size: 15px;
+          font-weight: 700;
+          color: #eef0f5;
+          margin-bottom: 6px;
+        }
+
+        .section-sub {
+          font-size: 12px;
+          color: #4a5060;
+          margin-bottom: 24px;
+          line-height: 1.5;
+        }
       `}</style>
 
       <div className="page">
@@ -224,43 +304,102 @@ export default function Login() {
 
           <div className="divider" />
 
-          <div className="field">
-            <label className="field-label">Email</label>
-            <input
-              className="field-input"
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="tu@email.com"
-              autoFocus
-            />
-          </div>
+          {!forgotMode ? (
+            <>
+              <div className="field">
+                <label className="field-label">Email</label>
+                <input
+                  className="field-input"
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="tu@email.com"
+                  autoFocus
+                />
+              </div>
 
-          <div className="field">
-            <label className="field-label">Contraseña</label>
-            <input
-              className="field-input"
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="••••••••"
-            />
-          </div>
+              <div className="field">
+                <label className="field-label">Contraseña</label>
+                <input
+                  className="field-input"
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="••••••••"
+                />
+              </div>
 
-          {error && (
-            <div className="error-msg">
-              <span>⚠</span> {error}
-            </div>
+              {error && (
+                <div className="error-msg">
+                  <span>⚠</span> {error}
+                </div>
+              )}
+
+              <button className="btn" onClick={handleLogin} disabled={loading}>
+                <div className="btn-inner">
+                  {loading && <div className="spinner" />}
+                  {loading ? 'Ingresando…' : 'Ingresar'}
+                </div>
+              </button>
+
+              <button className="forgot-link" onClick={() => setForgotMode(true)}>
+                ¿Olvidaste tu contraseña?
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="section-title">Recuperar contraseña</div>
+              <div className="section-sub">
+                Te enviamos un link a tu email para crear una nueva contraseña.
+              </div>
+
+              {!forgotSent ? (
+                <>
+                  <div className="field">
+                    <label className="field-label">Email</label>
+                    <input
+                      className="field-input"
+                      type="email"
+                      value={forgotEmail}
+                      onChange={e => setForgotEmail(e.target.value)}
+                      onKeyDown={handleForgotKey}
+                      placeholder="tu@email.com"
+                      autoFocus
+                    />
+                  </div>
+
+                  {forgotError && (
+                    <div className="error-msg">
+                      <span>⚠</span> {forgotError}
+                    </div>
+                  )}
+
+                  <button className="btn" onClick={handleForgot} disabled={forgotLoading}>
+                    <div className="btn-inner">
+                      {forgotLoading && <div className="spinner" />}
+                      {forgotLoading ? 'Enviando…' : 'Enviar link'}
+                    </div>
+                  </button>
+
+                  <button className="forgot-link" onClick={resetForgot}>
+                    ← Volver al login
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="success-msg">
+                    <span>✓</span>
+                    <span>Link enviado a <strong>{forgotEmail}</strong>. Revisá tu bandeja de entrada y seguí las instrucciones.</span>
+                  </div>
+                  <button className="forgot-link" onClick={resetForgot}>
+                    ← Volver al login
+                  </button>
+                </>
+              )}
+            </>
           )}
-
-          <button className="btn" onClick={handleLogin} disabled={loading}>
-            <div className="btn-inner">
-              {loading && <div className="spinner" />}
-              {loading ? 'Ingresando…' : 'Ingresar'}
-            </div>
-          </button>
         </div>
       </div>
     </>

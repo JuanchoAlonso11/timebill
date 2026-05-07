@@ -7,8 +7,11 @@ export default function ConfigPopup() {
   const [selected, setSelected] = useState(null)
   const [form, setForm] = useState(EMPTY_CLIENT)
   const [saved, setSaved] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [userRole, setUserRole] = useState(null)
 
   useEffect(() => {
+    window.timebill.auth.getRole().then(setUserRole)
     window.timebill.config.onData((data) => {
       setClients(data.clients || [])
     })
@@ -28,6 +31,16 @@ export default function ConfigPopup() {
     setSelected('new')
     setForm(EMPTY_CLIENT)
     setSaved(false)
+  }
+
+  async function handleDelete() {
+    if (!confirmDelete) { setConfirmDelete(true); return }
+    await window.timebill.clients.delete(selected)
+    const updated = await window.timebill.config.getClients()
+    setClients(updated)
+    setSelected(null)
+    setForm(EMPTY_CLIENT)
+    setConfirmDelete(false)
   }
 
   async function handleSave() {
@@ -151,6 +164,23 @@ export default function ConfigPopup() {
             </div>
 
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {selected !== 'new' && userRole === 'admin' && (
+                <button
+                  onClick={handleDelete}
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: 12,
+                    fontWeight: 500,
+                    background: confirmDelete ? 'rgba(229,83,75,0.15)' : 'transparent',
+                    color: 'var(--color-text-danger, #e5534b)',
+                    border: '0.5px solid rgba(229,83,75,0.3)',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {confirmDelete ? '¿Confirmar?' : 'Eliminar'}
+                </button>
+              )}
               <button
                 onClick={handleSave}
                 style={{

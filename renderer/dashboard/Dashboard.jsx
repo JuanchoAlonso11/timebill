@@ -82,9 +82,11 @@ export default function Dashboard() {
   const [entries, setEntries] = useState([])
   const [clients, setClients] = useState([])
   const [activeClient, setActiveClient] = useState('all')
-  const [loading, setLoading]     = useState(true)
+  const [loading, setLoading]       = useState(true)
   const [generating, setGenerating] = useState(false)
   const [reportResult, setReportResult] = useState(null)
+  const [role, setRole]             = useState(null)
+  const [adminView, setAdminView]   = useState('area') // 'area' | 'personal'
 
   const getRange = useCallback(() => {
     if (tab === 'custom') {
@@ -103,6 +105,7 @@ export default function Dashboard() {
       const data = await window.timebill.dashboard.getData(from, to)
       setEntries(data.entries || [])
       setClients(data.clients || [])
+      if (data.role) setRole(data.role)
     } catch (e) {
       console.error('[dashboard] Error:', e)
     } finally {
@@ -113,12 +116,17 @@ export default function Dashboard() {
   useEffect(() => { load() }, [load])
 
   // Datos derivados
+  // Para admin en vista personal, filtrar solo sus propias entradas
+  const visibleEntries = (role === 'admin' && adminView === 'personal')
+    ? entries.filter(e => e.is_own)
+    : entries
+
   const filtered = activeClient === 'all'
-    ? entries
-    : entries.filter(e => e.client_id === activeClient)
+    ? visibleEntries
+    : visibleEntries.filter(e => e.client_id === activeClient)
 
   const byClient = clients.map(c => {
-    const ces = entries.filter(e => e.client_id === c.id)
+    const ces = visibleEntries.filter(e => e.client_id === c.id)
     return { ...c, entries: ces, totalSec: totalSec(ces), totalAmt: totalAmount(ces) }
   }).filter(c => c.entries.length > 0)
 
@@ -194,6 +202,18 @@ export default function Dashboard() {
           )}
         </div>
         <div className="topbar-right">
+          {role === 'admin' && (
+            <div className="range-tabs" style={{ marginRight: 8 }}>
+              <button
+                className={`range-tab${adminView === 'area' ? ' active' : ''}`}
+                onClick={() => setAdminView('area')}
+              >Área</button>
+              <button
+                className={`range-tab${adminView === 'personal' ? ' active' : ''}`}
+                onClick={() => setAdminView('personal')}
+              >Mis horas</button>
+            </div>
+          )}
           <button className="refresh-btn" onClick={load}>↻ Actualizar</button>
         </div>
       </header>
@@ -302,6 +322,7 @@ export default function Dashboard() {
                     <th>Inicio</th>
                     <th>Fin</th>
                     <th>Cliente</th>
+                    {role === 'admin' && adminView === 'area' && <th>Empleado</th>}
                     <th>Tipo</th>
                     <th>Duración</th>
                     <th>Importe</th>
@@ -315,6 +336,11 @@ export default function Dashboard() {
                       <td className="td-mono">{fmtTime(e.started_at)}</td>
                       <td className="td-mono">{fmtTime(e.ended_at)}</td>
                       <td className="td-client">{e.client_name || '—'}</td>
+                      {role === 'admin' && adminView === 'area' && (
+                        <td style={{ fontSize: 11, color: e.is_own ? 'var(--color-text-info)' : 'var(--color-text-secondary)' }}>
+                          {e.is_own ? 'Yo' : (e.user_email || '—')}
+                        </td>
+                      )}
                       <td>{e.task_type || '—'}</td>
                       <td className="td-duration">{fmtDuration(e.duration_sec)}</td>
                       <td className="td-amount">{fmtAmount(e.duration_sec, e.rate_usd)}</td>

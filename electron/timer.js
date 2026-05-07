@@ -2,13 +2,16 @@
 const { randomUUID } = require('crypto')
 const { insertEntry, closeEntry } = require('./db')
 
-const IDLE_THRESHOLD_MS = 5 * 60 * 1000  // 5 minutos
+let idleThresholdMs = 5 * 60 * 1000  // 5 minutos (configurable)
 const IDLE_CHECK_INTERVAL_MS = 5_000  // chequea cada 5 segundos
 
 let activeEntry = null
 let idleCheckInterval = null
+let reminderInterval = null
+let reminderIntervalMs = 15 * 60 * 1000  // 15 minutos (configurable)
 let onIdleCallback = null
 let onStopCallback = null
+let onReminderCallback = null
 
 // --- Inicio de entrada ---
 
@@ -31,6 +34,7 @@ function startEntry({ clientId, clientName, taskType = 'general', windowTitle, s
 
   insertEntry({ id, client_id: clientId, task_type: taskType, started_at: now, window_title: windowTitle, source })
   startIdleCheck()
+  startReminder()
   console.log('[timer] Entrada iniciada para:', clientName)
   return activeEntry
 }
@@ -79,6 +83,7 @@ function stopEntry() {
 
   const stopped = { ...activeEntry, endedAt, durationSec }
   stopIdleCheck()
+  stopReminder()
   activeEntry = null
   onStopCallback?.(stopped)
   return stopped
@@ -94,7 +99,7 @@ function startIdleCheck() {
       const { powerMonitor } = require('electron')
       const idleSec = powerMonitor.getSystemIdleTime()
       console.log('[idle check] idle:', idleSec + 's | threshold:', IDLE_THRESHOLD_MS / 1000 + 's')
-      if (idleSec * 1000 >= IDLE_THRESHOLD_MS) {
+      if (idleSec * 1000 >= idleThresholdMs) {
         console.log('[timer] Idle detectado — disparando popup')
         pauseEntry('idle')
         onIdleCallback?.()
@@ -110,6 +115,22 @@ function stopIdleCheck() {
   if (idleCheckInterval) {
     clearInterval(idleCheckInterval)
     idleCheckInterval = null
+  }
+}
+
+function startReminder() {
+  stopReminder()
+  if (!reminderIntervalMs) return  // 0 = desactivado
+  reminderInterval = setInterval(() => {
+    if (!activeEntry || activeEntry.paused) return
+    onReminderCallback?.()
+  }, reminderIntervalMs)
+}
+
+function stopReminder() {
+  if (reminderInterval) {
+    clearInterval(reminderInterval)
+    reminderInterval = null
   }
 }
 
@@ -139,7 +160,7 @@ function recordActivity() {
 function isIdle() {
   try {
     const { powerMonitor } = require('electron')
-    return powerMonitor.getSystemIdleTime() * 1000 >= IDLE_THRESHOLD_MS
+    return powerMonitor.getSystemIdleTime() * 1000 >= idleThresholdMs
   } catch {
     return false
   }
@@ -153,9 +174,20 @@ function setOnIdle(fn) { onIdleCallback = fn }
 function setOnStop(fn) { onStopCallback = fn }
 function updateTaskType(taskType) { if (activeEntry) activeEntry.taskType = taskType }
 
+function setIdleThreshold(ms) { idleThresholdMs = ms }
+function getIdleThreshold() { return idleThresholdMs }
+function setReminderInterval(ms) {
+  reminderIntervalMs = ms
+  if (activeEntry) { stopReminder(); startReminder() }
+}
+function getReminderInterval() { return reminderIntervalMs }
+function setOnReminder(fn) { onReminderCallback = fn }
+
 module.exports = {
   startEntry, stopEntry, pauseEntry, resumeEntry,
   recordActivity, getActiveEntry, updateTaskType,
-  setOnIdle, setOnStop, isIdle,
+  setOnIdle, setOnStop, setOnReminder, isIdle,
   suspendIdleCheck, resumeIdleCheck,
+  setIdleThreshold, getIdleThreshold,
+  setReminderInterval, getReminderInterval,
 }
