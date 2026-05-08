@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 
-const TASK_TYPES = [
+const DEFAULT_TASK_TYPES = [
   { value: 'llamada',      label: 'Llamada telefónica' },
   { value: 'reunion',      label: 'Reunión presencial' },
   { value: 'redaccion',    label: 'Redacción' },
@@ -15,11 +15,23 @@ const TASK_TYPES = [
 export default function ManualPopup() {
   const [clients, setClients] = useState([])
   const [selectedClientId, setSelectedClientId] = useState('')
-  const [taskType, setTaskType] = useState('llamada')
+  const [taskType, setTaskType] = useState('')
+  const [taskTypes, setTaskTypes] = useState(DEFAULT_TASK_TYPES)
   const [showRetro, setShowRetro] = useState(false)
   const [minutesAgo, setMinutesAgo] = useState(15)
 
   useEffect(() => {
+    window.timebill.config.getTaskTypes().then(types => {
+      if (types?.length > 0) {
+        setTaskTypes(types)
+        setTaskType(types[0].value)
+      } else {
+        setTaskType(DEFAULT_TASK_TYPES[0].value)
+      }
+    }).catch(() => {
+      setTaskType(DEFAULT_TASK_TYPES[0].value)
+    })
+
     window.timebill.manual.onData((data) => {
       setClients(data.allClients || [])
       if (data.allClients?.length > 0) {
@@ -97,7 +109,7 @@ export default function ManualPopup() {
           onChange={e => setTaskType(e.target.value)}
           style={{ width: '100%', fontSize: 12 }}
         >
-          {TASK_TYPES.map(t => (
+          {taskTypes.map(t => (
             <option key={t.value} value={t.value}>{t.label}</option>
           ))}
         </select>

@@ -650,6 +650,27 @@ function setupIPC() {
     return true
   })
 
+  const DEFAULT_TASK_TYPES = [
+    { value: 'llamada',      label: 'Llamada telefónica' },
+    { value: 'reunion',      label: 'Reunión presencial' },
+    { value: 'redaccion',    label: 'Redacción' },
+    { value: 'revision',     label: 'Revisión de documentos' },
+    { value: 'consulta',     label: 'Consulta / asesoramiento' },
+    { value: 'audiencia',    label: 'Audiencia / representación' },
+    { value: 'comunicacion', label: 'Email / comunicación' },
+    { value: 'tramite',      label: 'Trámite administrativo' },
+    { value: 'general',      label: 'General' },
+  ]
+
+  ipcMain.handle('config:getTaskTypes', () => {
+    return store.get('taskTypes', DEFAULT_TASK_TYPES)
+  })
+
+  ipcMain.handle('config:saveTaskTypes', (_, types) => {
+    store.set('taskTypes', types)
+    return true
+  })
+
   ipcMain.handle('clients:upsert', (_, client) => {
     upsertClient(client)
     resetClientSync()

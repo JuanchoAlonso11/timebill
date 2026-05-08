@@ -98,7 +98,7 @@ function startIdleCheck() {
     try {
       const { powerMonitor } = require('electron')
       const idleSec = powerMonitor.getSystemIdleTime()
-      console.log('[idle check] idle:', idleSec + 's | threshold:', IDLE_THRESHOLD_MS / 1000 + 's')
+      console.log('[idle check] idle:', idleSec + 's | threshold:', idleThresholdMs / 1000 + 's')
       if (idleSec * 1000 >= idleThresholdMs) {
         console.log('[timer] Idle detectado — disparando popup')
         pauseEntry('idle')

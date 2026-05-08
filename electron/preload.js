@@ -32,10 +32,12 @@ contextBridge.exposeInMainWorld('timebill', {
   },
 
   config: {
-    getClients:  ()                     => ipcRenderer.invoke('config:getClients'),
-    saveClient:  (client)               => ipcRenderer.invoke('config:saveClient', client),
-    setKeywords: (clientId, keywords)   => ipcRenderer.invoke('config:setKeywords', { clientId, keywords }),
-    onData:      (fn)                   => ipcRenderer.on('config:data', (_, data) => fn(data)),
+    getClients:    ()                     => ipcRenderer.invoke('config:getClients'),
+    saveClient:    (client)               => ipcRenderer.invoke('config:saveClient', client),
+    setKeywords:   (clientId, keywords)   => ipcRenderer.invoke('config:setKeywords', { clientId, keywords }),
+    onData:        (fn)                   => ipcRenderer.on('config:data', (_, data) => fn(data)),
+    getTaskTypes:  ()                     => ipcRenderer.invoke('config:getTaskTypes'),
+    saveTaskTypes: (types)                => ipcRenderer.invoke('config:saveTaskTypes', types),
   },
 
   auth: {
