@@ -1,79 +1,125 @@
-# TimeBill — Semana 1
+# Smart Hours
 
-Motor de detección automática de ventanas + timer local.
+Aplicación de escritorio para tracking automático de horas profesionales. Detecta la ventana activa, identifica el cliente según keywords configurables y registra el tiempo trabajado — todo de forma local y sincronizado con la nube.
 
-## Setup
+---
+
+## Características
+
+- **Detección automática** — monitorea la ventana activa y arranca el timer cuando detecta un cliente
+- **Registro manual** — Ctrl+Shift+B para registrar tareas retroactivas o iniciar el timer manualmente
+- **Idle detection** — pausa el timer automáticamente si no hay actividad, con beep de recordatorio configurable
+- **Dashboard** — log de horas por cliente con totales, importes y generación de reportes PDF
+- **Reportes** — exportación a PDF y envío por WhatsApp
+- **Multi-usuario** — RLS por área/organización vía Supabase, con roles admin y empleado
+- **Offline-first** — SQLite local con sync automático a Supabase cada 30 segundos
+- **Auto-update** — actualizaciones automáticas vía GitHub Releases
+
+---
+
+## Stack
+
+- **Electron 29** + React/Vite
+- **SQLite** (better-sqlite3) — almacenamiento local
+- **Supabase** (PostgreSQL, São Paulo) — sync en la nube + Auth + RLS
+- **electron-builder** — empaquetado Windows (.exe NSIS)
+- **electron-updater** — auto-update vía GitHub Releases
+
+---
+
+## Setup de desarrollo
 
 ```bash
-git clone https://github.com/TU_USUARIO/timebill.git
+git clone https://github.com/JuanchoAlonso11/timebill.git
 cd timebill
-npm install           # también corre postinstall que compila better-sqlite3
-npm run dev           # arranca Vite + Electron juntos
+npm install
 ```
 
-> **Nota Windows:** si `postinstall` falla, corré `npm run rebuild` manualmente.  
-> **Nota Mac:** puede pedir permisos de Accesibilidad en Sistema → Privacidad para leer ventanas activas.
+> Si `postinstall` falla en Windows, corré `npm run rebuild` manualmente.
 
-## Qué hace en este estado
+**Arrancar en desarrollo:**
 
-- Arranca en el tray (ícono verde con T)
-- Monitorea la ventana activa cada 3 segundos
-- Cuando detecta un título que contiene keywords de un cliente → muestra popup
-- El popup tiene countdown de 15s, confirmar arranca el timer
-- El timer se muestra en el tray (MM:SS actualizado cada segundo)
-- Click en el tray → abre widget con cronómetro, selector de tarea y botón stop
-- Todo se guarda en SQLite local (`~/Library/Application Support/timebill/timebill.db` en Mac)
-- Clientes de prueba cargados automáticamente en modo dev:
-  - **García S.A.** — keywords: garcia, garcía, exp-2024-047
-  - **Martínez Hnos.** — keywords: martinez, escritura
-  - **Pérez & Asociados** — keywords: perez, demanda-civil
+```bash
+# Terminal 1
+npm run dev
 
-## Para probar
+# Terminal 2
+npx cross-env NODE_ENV=development electron .
+```
 
-Abrí un archivo o carpeta con el nombre de un cliente, por ejemplo:
-- `Contrato_GarcíaSA_v2.docx` → detecta García S.A.
-- Cualquier ventana con "martinez" en el título → detecta Martínez Hnos.
+---
 
-## Estructura
+## Build y distribución
+
+```bash
+# Generar .exe y publicar en GitHub Releases
+$env:GH_TOKEN="tu_personal_access_token"
+npm run dist -- --publish always
+```
+
+> Recordar actualizar `"version"` en `package.json` antes de cada release.
+
+---
+
+## Estructura del proyecto
 
 ```
 timebill/
 ├── electron/
-│   ├── main.js           ← entry point, tray, IPC
-│   ├── windowMonitor.js  ← polling ventana activa (active-win)
-│   ├── ruleEngine.js     ← match keywords → cliente
-│   ├── timer.js          ← timer + idle detection (pausa a 5 min)
+│   ├── main.js           ← entry point, ventanas, IPC handlers
+│   ├── preload.js        ← bridge seguro main ↔ renderer
+│   ├── timer.js          ← timer, idle detection, reminder beep
+│   ├── sync.js           ← sync SQLite ↔ Supabase
 │   ├── db.js             ← SQLite (better-sqlite3)
-│   └── preload.js        ← bridge seguro main ↔ renderer
+│   ├── windowMonitor.js  ← polling ventana activa (PowerShell)
+│   └── ruleEngine.js     ← match keywords → cliente
 ├── renderer/
-│   ├── popup.html        ← shell del popup de detección
-│   ├── tray.html         ← shell del widget del timer
-│   ├── popup/
-│   │   ├── main.jsx      ← entry React del popup
-│   │   └── DetectionPopup.jsx
-│   └── tray/
-│       ├── main.jsx      ← entry React del timer widget
-│       └── TimerWidget.jsx
+│   ├── login/            ← pantalla de login + recuperación de contraseña
+│   ├── main-window/      ← ventana principal con timer y acciones
+│   ├── dashboard/        ← dashboard de horas (empleado y admin)
+│   ├── config/           ← configuración de clientes y tipos de tarea
+│   ├── manual/           ← registro manual de tareas
+│   ├── popup/            ← popup de detección automática
+│   ├── idle/             ← popup de inactividad
+│   └── onboarding/       ← onboarding de 3 pasos
 ├── assets/
-│   └── tray-icon.png
+│   └── icon-256.png
+├── getwindow.ps1         ← script PowerShell para detectar ventana activa
 └── vite.config.js
 ```
+
+---
 
 ## Schema SQLite
 
 ```sql
-clients      (id, name, rate_usd, active, synced)
+clients      (id, name, rate_usd, active, area_id, synced)
 rules        (id, client_id, keyword, match_type)
-time_entries (id, client_id, task_type, started_at, ended_at, duration_sec, source, synced)
+time_entries (id, client_id, task_type, started_at, ended_at, duration_sec, source, area_id, user_id, synced)
 ```
 
-`synced = 0` marca registros pendientes de subir a Supabase (semana 3).
+---
 
-## Roadmap
+## Schema Supabase
 
-| Semana | Qué se agrega |
-|--------|---------------|
-| **1** ✓ | Monitor + timer + popup + SQLite |
-| **2** | Popup idle, registro manual, config de clientes |
-| **3** | Dashboard web React + sync Supabase |
-| **4** | Reportes PDF + envío WhatsApp |
+```sql
+organizations  (id, name, active_until)
+areas          (id, organization_id, name)
+memberships    (id, user_id, area_id, role)  -- role: 'admin' | 'employee'
+clients        (id, name, rate_usd, active, area_id, user_id)
+time_entries   (id, client_id, task_type, started_at, ended_at, duration_sec, source, area_id, user_id)
+```
+
+RLS activo en todas las tablas — cada usuario solo accede a los datos de su área.
+
+---
+
+## Alta de nuevos clientes (organizaciones)
+
+La gestión de organizaciones, áreas y usuarios se realiza manualmente en el dashboard de Supabase. Roadmap incluye panel de administración web.
+
+---
+
+## Reset de contraseña
+
+Página hosteada en Netlify: [smarthours-reset.netlify.app/reset-password.html](https://smarthours-reset.netlify.app/reset-password.html)
