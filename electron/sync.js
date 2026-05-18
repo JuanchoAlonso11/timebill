@@ -26,6 +26,46 @@ function setUserId(uid) {
   currentUserId = uid
 }
 
+async function pullClients() {
+  if (!supabase || !currentAreaId) return
+  try {
+    const { data: remoteClients, error } = await supabase
+      .from('clients')
+      .select('id, name, rate_usd, active')
+      .eq('area_id', currentAreaId)
+
+    if (error) { console.error('[sync] Error pull clientes:', error.message); return }
+    if (!remoteClients?.length) return
+
+    const { upsertClient, setClientRules } = require('./db')
+
+    for (const c of remoteClients) {
+      upsertClient({ id: c.id, name: c.name, rate_usd: c.rate_usd })
+    }
+
+    // Pull de rules también
+    const { data: remoteRules } = await supabase
+      .from('rules')
+      .select('client_id, keyword')
+      .in('client_id', remoteClients.map(c => c.id))
+
+    if (remoteRules?.length) {
+      const byClient = {}
+      for (const r of remoteRules) {
+        if (!byClient[r.client_id]) byClient[r.client_id] = []
+        byClient[r.client_id].push(r.keyword)
+      }
+      for (const [clientId, keywords] of Object.entries(byClient)) {
+        setClientRules(clientId, keywords)
+      }
+    }
+
+    console.log('[sync] Pull clientes:', remoteClients.length)
+  } catch (err) {
+    console.error('[sync] Error inesperado en pull:', err.message)
+  }
+}
+
 async function syncClients() {
   if (!supabase || !currentUserId || !currentAreaId) return
 
@@ -93,7 +133,7 @@ async function runSync() {
 function start() {
   if (syncInterval) return
   console.log('[sync] Iniciado, sincronizando cada', SYNC_INTERVAL_MS / 1000, 'seg')
-  runSync()
+  pullClients().then(() => runSync())
   syncInterval = setInterval(runSync, SYNC_INTERVAL_MS)
 }
 

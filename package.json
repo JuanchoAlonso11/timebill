@@ -1,6 +1,6 @@
 {
   "name": "smart-hours",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Tracking inteligente de horas profesionales",
   "main": "electron/main.js",
   "scripts": {
@@ -15,7 +15,6 @@
     "better-sqlite3": "^9.4.3",
     "dotenv": "^17.4.2",
     "electron-store": "^8.2.0",
-    "electron-updater": "^6.3.9",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },
@@ -54,11 +53,6 @@
         "to": "getwindow.ps1"
       }
     ],
-    "publish": {
-      "provider": "github",
-      "owner": "JuanchoAlonso11",
-      "repo": "timebill"
-    },
     "asar": true,
     "asarUnpack": [
       "node_modules/better-sqlite3/**/*"

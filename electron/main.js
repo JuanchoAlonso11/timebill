@@ -29,6 +29,23 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 let lastDetectedClientId = null
 let lastDetectedWindowTitle = null
 
+// ─── Single instance lock ─────────────────────────────────────────────────────
+
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    // Si se intenta abrir una segunda instancia, traemos la ventana principal al frente
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    } else if (loginWindow && !loginWindow.isDestroyed()) {
+      loginWindow.focus()
+    }
+  })
+}
+
 // ─── App lifecycle ───────────────────────────────────────────────────
 
 app.whenReady().then(() => {
