@@ -1,7 +1,12 @@
 // electron/main.js
 require('dotenv').config()
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, globalShortcut, dialog } = require('electron')
-const { autoUpdater } = require('electron-updater')
+let autoUpdater = null
+try {
+  autoUpdater = require('electron-updater').autoUpdater
+} catch (e) {
+  console.warn('[updater] electron-updater no disponible:', e.message)
+}
 const path = require('path')
 const { start: startMonitor, stop: stopMonitor } = require('./windowMonitor')
 const { startEntry, stopEntry, pauseEntry, resumeEntry, getActiveEntry, updateTaskType, setOnIdle, setOnStop, setOnReminder, suspendIdleCheck, resumeIdleCheck, setIdleThreshold, getIdleThreshold, setReminderInterval, getReminderInterval } = require('./timer')
@@ -53,7 +58,7 @@ app.whenReady().then(() => {
   showLoginWindow()
 
   // Auto-update (solo en producción)
-  if (!IS_DEV) {
+  if (!IS_DEV && autoUpdater) {
     autoUpdater.checkForUpdatesAndNotify()
 
     autoUpdater.on('update-available', () => {
@@ -602,11 +607,21 @@ function setupIPC() {
   })
 
   ipcMain.handle('app:openDashboard', () => {
-    openDashboard()
+    try {
+      openDashboard()
+    } catch(err) {
+      console.error('[dashboard] Error abriendo:', err.message)
+      dialog.showErrorBox('Error al abrir dashboard', err.message)
+    }
   })
 
   ipcMain.handle('app:openConfig', () => {
-    showConfigWindow()
+    try {
+      showConfigWindow()
+    } catch(err) {
+      console.error('[config] Error abriendo:', err.message)
+      dialog.showErrorBox('Error al abrir configuración', err.message)
+    }
   })
 
   ipcMain.handle('app:openManual', () => {
