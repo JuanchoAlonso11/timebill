@@ -1,12 +1,7 @@
 // electron/main.js
 require('dotenv').config()
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, globalShortcut, dialog } = require('electron')
-let autoUpdater = null
-try {
-  autoUpdater = require('electron-updater').autoUpdater
-} catch (e) {
-  console.warn('[updater] electron-updater no disponible:', e.message)
-}
+const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const { start: startMonitor, stop: stopMonitor } = require('./windowMonitor')
 const { startEntry, stopEntry, pauseEntry, resumeEntry, getActiveEntry, updateTaskType, setOnIdle, setOnStop, setOnReminder, suspendIdleCheck, resumeIdleCheck, setIdleThreshold, getIdleThreshold, setReminderInterval, getReminderInterval } = require('./timer')
@@ -58,7 +53,7 @@ app.whenReady().then(() => {
   showLoginWindow()
 
   // Auto-update (solo en producción)
-  if (!IS_DEV && autoUpdater) {
+  if (!IS_DEV) {
     autoUpdater.checkForUpdatesAndNotify()
 
     autoUpdater.on('update-available', () => {
@@ -280,6 +275,16 @@ function showMainWindow() {
   mainWindow.loadURL(url)
   mainWindow.setMenuBarVisibility(false)
 
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error('[mainWindow] Error al cargar:', errorCode, errorDescription)
+  })
+
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    console.error('[mainWindow] Renderer crasheó:', details.reason)
+    mainWindow = null
+    setTimeout(() => showMainWindow(), 500)
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -297,9 +302,7 @@ function createTray() {
   updateTrayTitle()
 
   tray.on('click', () => {
-    if (mainWindow) {
-      mainWindow.isMinimized() ? mainWindow.restore() : mainWindow.focus()
-    }
+    showMainWindow()
   })
 }
 
@@ -607,21 +610,11 @@ function setupIPC() {
   })
 
   ipcMain.handle('app:openDashboard', () => {
-    try {
-      openDashboard()
-    } catch(err) {
-      console.error('[dashboard] Error abriendo:', err.message)
-      dialog.showErrorBox('Error al abrir dashboard', err.message)
-    }
+    openDashboard()
   })
 
   ipcMain.handle('app:openConfig', () => {
-    try {
-      showConfigWindow()
-    } catch(err) {
-      console.error('[config] Error abriendo:', err.message)
-      dialog.showErrorBox('Error al abrir configuración', err.message)
-    }
+    showConfigWindow()
   })
 
   ipcMain.handle('app:openManual', () => {
