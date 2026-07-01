@@ -61,7 +61,7 @@ export default function Report() {
       {/* Header */}
       <div style={styles.header}>
         <div>
-          <div style={styles.brand}>TimeBill</div>
+          <div style={styles.brand}>Smart Hours</div>
           <div style={styles.brandSub}>Registro de horas profesionales</div>
         </div>
         <div style={styles.headerRight}>
@@ -130,7 +130,7 @@ export default function Report() {
 
       {/* Footer */}
       <div style={styles.footer}>
-        <span>Generado con TimeBill — tracking automático de horas para estudios jurídicos</span>
+        <span>Generado con Smart Hours — registro de horas profesionales</span>
       </div>
     </div>
   )

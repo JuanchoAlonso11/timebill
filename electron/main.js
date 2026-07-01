@@ -521,7 +521,7 @@ function showConfigWindow() {
     x: Math.round((width - 520) / 2),
     y: Math.round((height - 420) / 2),
     frame: true,
-    title: 'TimeBill — Configurar clientes',
+    title: 'Smart Hours — Configurar clientes',
     resizable: false,
     skipTaskbar: false,
     webPreferences: {
@@ -562,7 +562,7 @@ function openDashboard() {
     x: Math.round((width - 900) / 2),
     y: Math.round((height - 640) / 2),
     frame: true,
-    title: 'TimeBill — Dashboard',
+    title: 'Smart Hours — Dashboard',
     resizable: true,
     minWidth: 720,
     minHeight: 500,
@@ -850,12 +850,25 @@ function setupIPC() {
   ipcMain.handle('auth:getUser', () => currentUser)
 
   ipcMain.handle('dashboard:getData', async (_, { from, to }) => {
-    const role = currentUser ? (store.get(`membership-${currentUser.id}`, {}).role || null) : null
-    const areaId = currentUser ? (store.get(`membership-${currentUser.id}`, {}).areaId || null) : null
+    const membership = currentUser ? store.get(`membership-${currentUser.id}`, {}) : {}
+    const role   = membership.role   || null
+    const areaId = membership.areaId || null
 
-    if (role === 'admin' && supabaseClient && areaId) {
-      // Admin: traer todas las entradas del área desde Supabase
-      const { data: entries, error } = await supabaseClient
+    // Sin sesión / sin área / sin Supabase → fallback a SQLite local (modo offline)
+    if (!currentUser || !supabaseClient || !areaId) {
+      const entries = getEntriesInRange(from, to)
+      const clients = getAllClients()
+      return { entries, clients, role: role || 'employee', source: 'local' }
+    }
+
+    // Antes de leer, empujamos las entradas locales pendientes a Supabase
+    // así el dashboard refleja las tareas recién terminadas sin esperar al próximo sync.
+    // Si no hay nada pendiente es casi instantáneo (getUnsyncedEntries devuelve []).
+    try { await syncNow() } catch (e) { console.error('[dashboard] syncNow falló:', e.message) }
+
+    try {
+      // Entradas del área (RLS filtra por área). El empleado, además, solo las suyas.
+      let query = supabaseClient
         .from('time_entries')
         .select('*, clients(name, rate_usd)')
         .eq('area_id', areaId)
@@ -864,44 +877,243 @@ function setupIPC() {
         .not('ended_at', 'is', null)
         .order('started_at', { ascending: false })
 
+      if (role !== 'admin') {
+        query = query.eq('user_id', currentUser.id)
+      }
+
+      const { data: entries, error } = await query
+
       if (error) {
         console.error('[dashboard] Error Supabase:', error.message)
         // Fallback a SQLite local
         const localEntries = getEntriesInRange(from, to)
         const clients = getAllClients()
-        return { entries: localEntries, clients, role: 'admin' }
+        return { entries: localEntries, clients, role: role || 'employee', source: 'local-fallback' }
       }
 
-      // Obtener lista de usuarios únicos para mostrar nombres
-      const userIds = [...new Set(entries.map(e => e.user_id).filter(Boolean))]
+      const rows = entries || []
+
+      // Emails reales desde memberships.email (RLS deshabilitado en memberships).
+      // Solo lo necesita el admin (vista de área); el empleado solo se ve a sí mismo.
       let userEmails = {}
-      if (userIds.length > 0) {
-        const { data: memberships } = await supabaseClient
-          .from('memberships')
-          .select('user_id')
-          .in('user_id', userIds)
-        // Obtener emails via auth (solo disponible con service role, usamos user_id como fallback)
-        userIds.forEach(uid => {
-          userEmails[uid] = uid === currentUser.id ? currentUser.email : `Usuario ${uid.slice(0, 8)}`
-        })
+      if (role === 'admin') {
+        const userIds = [...new Set(rows.map(e => e.user_id).filter(Boolean))]
+        if (userIds.length > 0) {
+          const { data: memberships, error: memErr } = await supabaseClient
+            .from('memberships')
+            .select('user_id, email')
+            .in('user_id', userIds)
+          if (memErr) {
+            console.error('[dashboard] Error emails:', memErr.message)
+          } else {
+            for (const m of (memberships || [])) {
+              if (m.email) userEmails[m.user_id] = m.email
+            }
+          }
+        }
       }
 
-      const normalizedEntries = entries.map(e => ({
+      const normalizedEntries = rows.map(e => ({
         ...e,
-        client_name: e.clients?.name || null,
-        rate_usd:    e.clients?.rate_usd || null,
+        client_name: e.clients?.name ?? null,
+        rate_usd:    e.clients?.rate_usd ?? null,
         user_email:  userEmails[e.user_id] || null,
         is_own:      e.user_id === currentUser.id,
       }))
 
+      // Lista de clientes derivada de las entradas (cubre todos los del área con actividad,
+      // incluyendo clientes de otros empleados que no están en el SQLite local del admin).
+      const clientMap = {}
+      for (const e of normalizedEntries) {
+        if (e.client_id && !clientMap[e.client_id]) {
+          clientMap[e.client_id] = {
+            id:       e.client_id,
+            name:     e.client_name,
+            rate_usd: e.rate_usd,
+          }
+        }
+      }
+      const clients = Object.values(clientMap)
+
+      return { entries: normalizedEntries, clients, role: role || 'employee', source: 'supabase' }
+    } catch (err) {
+      console.error('[dashboard] Error inesperado:', err.message)
+      const localEntries = getEntriesInRange(from, to)
       const clients = getAllClients()
-      return { entries: normalizedEntries, clients, role: 'admin' }
+      return { entries: localEntries, clients, role: role || 'employee', source: 'local-error' }
+    }
+  })
+
+  ipcMain.handle('dashboard:setCobrado', async (_, { ids, cobrado, fechaCobro }) => {
+    const membership = currentUser ? store.get(`membership-${currentUser.id}`, {}) : {}
+    const role   = membership.role   || null
+    const areaId = membership.areaId || null
+
+    if (role !== 'admin') {
+      return { error: 'Solo un administrador puede marcar tareas como cobradas.' }
+    }
+    if (!supabaseClient || !areaId) {
+      return { error: 'No hay conexión con el servidor. Probá de nuevo con internet.' }
+    }
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return { error: 'No se seleccionaron tareas.' }
     }
 
-    // Employee: solo SQLite local
-    const entries = getEntriesInRange(from, to)
-    const clients = getAllClients()
-    return { entries, clients, role: role || 'employee' }
+    // Si se marca cobrado, guardamos la fecha; si se desmarca, limpiamos la fecha.
+    const payload = cobrado
+      ? { cobrado: true,  fecha_cobro: fechaCobro || null }
+      : { cobrado: false, fecha_cobro: null }
+
+    // El .eq('area_id', areaId) es un cinturón extra además de la RLS:
+    // un admin solo puede tocar tareas de su propia área.
+    const { data, error } = await supabaseClient
+      .from('time_entries')
+      .update(payload)
+      .in('id', ids)
+      .eq('area_id', areaId)
+      .select('id')
+
+    if (error) {
+      console.error('[cobrado] Error Supabase:', error.message)
+      return { error: error.message }
+    }
+
+    const updated = data?.length || 0
+    if (updated === 0) {
+      // Update sin error pero 0 filas → casi seguro falta la policy RLS de UPDATE para admin.
+      console.error('[cobrado] 0 filas actualizadas — ¿falta la policy admin_update_entries_area?')
+      return { error: 'No se actualizó ninguna tarea. Verificá la policy RLS de UPDATE para admin.' }
+    }
+
+    console.log('[cobrado] Actualizadas:', updated, '| cobrado:', cobrado)
+    return { ok: true, updated }
+  })
+
+  ipcMain.handle('dashboard:addManualEntry', async (_, { clientId, taskType, startedAt, endedAt }) => {
+    if (!currentUser)            return { error: 'No hay sesión activa.' }
+    if (!clientId)               return { error: 'Elegí un cliente.' }
+    if (!taskType)               return { error: 'Elegí un tipo de tarea.' }
+    if (!startedAt || !endedAt)  return { error: 'Faltan la fecha y las horas.' }
+
+    const start = new Date(startedAt)
+    const end   = new Date(endedAt)
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return { error: 'Fecha u hora inválida.' }
+    }
+    if (end <= start) {
+      return { error: 'La hora de fin debe ser posterior a la de inicio.' }
+    }
+
+    const durationSec = Math.round((end.getTime() - start.getTime()) / 1000)
+
+    // Tope de seguridad: 24hs (evita cargas accidentales gigantes)
+    if (durationSec > 24 * 3600) {
+      return { error: 'La duración no puede superar las 24 horas.' }
+    }
+
+    const { randomUUID } = require('crypto')
+    const id = randomUUID()
+
+    try {
+      // Mismo patrón que manual:saveRetro → guarda en SQLite local
+      insertEntry({ id, client_id: clientId, task_type: taskType, started_at: start.toISOString(), window_title: null, source: 'manual' })
+      closeEntry({ id, ended_at: end.toISOString(), duration_sec: durationSec })
+      // Empujar a Supabase para que aparezca en el dashboard sin esperar al sync periódico
+      try { await syncNow() } catch (e) { console.error('[manual] syncNow falló:', e.message) }
+      console.log('[manual] Entrada manual guardada:', durationSec, 'seg')
+      return { ok: true, id, durationSec }
+    } catch (e) {
+      console.error('[manual] Error guardando:', e.message)
+      return { error: 'No se pudo guardar la tarea.' }
+    }
+  })
+
+  ipcMain.handle('dashboard:editEntry', async (_, { id, clientId, taskType, startedAt, endedAt, note, changes }) => {
+    const membership = currentUser ? store.get(`membership-${currentUser.id}`, {}) : {}
+    const role   = membership.role   || null
+    const areaId = membership.areaId || null
+
+    if (!currentUser)            return { error: 'No hay sesión activa.' }
+    if (!supabaseClient || !areaId) return { error: 'No hay conexión con el servidor.' }
+    if (!id)                     return { error: 'Falta el id de la tarea.' }
+    if (!clientId)               return { error: 'Elegí un cliente.' }
+    if (!taskType)               return { error: 'Elegí un tipo de tarea.' }
+
+    const start = new Date(startedAt)
+    const end   = new Date(endedAt)
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) return { error: 'Fecha u hora inválida.' }
+    if (end <= start) return { error: 'La hora de fin debe ser posterior a la de inicio.' }
+
+    const durationSec = Math.round((end.getTime() - start.getTime()) / 1000)
+    if (durationSec > 24 * 3600) return { error: 'La duración no puede superar las 24 horas.' }
+
+    const payload = {
+      client_id:    clientId,
+      task_type:    taskType,
+      started_at:   start.toISOString(),
+      ended_at:     end.toISOString(),
+      duration_sec: durationSec,
+      note:         note || null,
+    }
+
+    // Admin edita cualquier tarea de su área; empleado solo las propias (cinturón extra sobre RLS)
+    let q = supabaseClient.from('time_entries').update(payload).eq('id', id).eq('area_id', areaId)
+    if (role !== 'admin') q = q.eq('user_id', currentUser.id)
+
+    const { data, error } = await q.select('id')
+    if (error) {
+      console.error('[edit] Error update:', error.message)
+      return { error: error.message }
+    }
+    if (!data || data.length === 0) {
+      return { error: 'No se pudo editar (sin permisos o falta policy RLS de UPDATE).' }
+    }
+
+    // Historial: una fila por campo cambiado
+    if (Array.isArray(changes) && changes.length > 0) {
+      const { randomUUID } = require('crypto')
+      const editGroup = randomUUID()
+      const rows = changes.map(c => ({
+        entry_id:   id,
+        edited_by:  currentUser.id,
+        field:      c.field,
+        old_value:  c.oldValue == null ? null : String(c.oldValue),
+        new_value:  c.newValue == null ? null : String(c.newValue),
+        area_id:    areaId,
+        edit_group: editGroup,
+      }))
+      const { error: histErr } = await supabaseClient.from('entry_edits').insert(rows)
+      // Si falla el historial no abortamos: el cambio principal ya se guardó
+      if (histErr) console.error('[edit] Error guardando historial:', histErr.message)
+    }
+
+    console.log('[edit] Tarea editada:', id, '| cambios:', changes?.length || 0)
+    return { ok: true }
+  })
+
+  ipcMain.handle('dashboard:getEntryEdits', async (_, entryId) => {
+    if (!supabaseClient || !entryId) return []
+    const { data, error } = await supabaseClient
+      .from('entry_edits')
+      .select('*')
+      .eq('entry_id', entryId)
+      .order('edited_at', { ascending: false })
+
+    if (error) { console.error('[edit] getEntryEdits:', error.message); return [] }
+
+    // Resolver emails de quién editó
+    const userIds = [...new Set((data || []).map(r => r.edited_by).filter(Boolean))]
+    let emails = {}
+    if (userIds.length > 0) {
+      const { data: mem } = await supabaseClient
+        .from('memberships')
+        .select('user_id, email')
+        .in('user_id', userIds)
+      for (const m of (mem || [])) emails[m.user_id] = m.email
+    }
+
+    return (data || []).map(r => ({ ...r, editor_email: emails[r.edited_by] || null }))
   })
 
   ipcMain.handle('report:getData', () => {
@@ -940,7 +1152,7 @@ function setupIPC() {
     const fs  = require('fs')
     const safe = clientName.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ]/g, '_')
     const dateStr = from.slice(0, 10)
-    const fileName = `TimeBill_${safe}_${dateStr}.pdf`
+    const fileName = `Informe_${safe}_${dateStr}.pdf`
     const tempPath = path.join(os.tmpdir(), fileName)
     fs.writeFileSync(tempPath, pdfData)
 

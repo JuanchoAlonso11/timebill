@@ -457,6 +457,130 @@ tbody tr:last-child td { border-bottom: none; }
 }
 .report-modal-close:hover { color: var(--text); }
 
+/* ─── Modal registro manual ───────────────────────── */
+
+.manual-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+}
+
+.manual-field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.manual-field {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-hi);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  outline: none;
+  width: 100%;
+  transition: border-color .15s;
+}
+.manual-field:focus { border-color: var(--accent); }
+
+/* Select: sacamos la apariencia nativa y ponemos flecha custom */
+select.manual-field {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  cursor: pointer;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M1 3l4 4 4-4' stroke='%236b7180' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px;
+}
+
+/* Opciones del menú desplegado (respetado en Chromium/Windows) */
+.manual-field option {
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* Inputs de fecha y hora: fuente mono como el resto de los datos temporales */
+input.manual-field[type="date"],
+input.manual-field[type="time"] {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* Ícono del picker (calendario/reloj) adaptado al tema oscuro */
+input.manual-field[type="date"]::-webkit-calendar-picker-indicator,
+input.manual-field[type="time"]::-webkit-calendar-picker-indicator {
+  filter: invert(.8);
+  opacity: .6;
+  cursor: pointer;
+}
+
+.manual-row { display: flex; gap: 10px; }
+.manual-row .manual-field-label { flex: 1; }
+
+.manual-duration {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--text-dim);
+  min-height: 18px;
+}
+.manual-duration strong {
+  font-family: var(--font-mono);
+  color: var(--green);
+  font-weight: 500;
+}
+
+/* Historial de cambios (modal de edición) */
+.edit-history {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  max-height: 140px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.edit-history-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.edit-history-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.edit-history-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.edit-history-change {
+  font-size: 12px;
+  color: var(--text);
+}
+.edit-history-change strong {
+  color: var(--text-hi);
+  text-transform: capitalize;
+}
+
 /* ─── Scrollbar ───────────────────────────────────── */
 
 ::-webkit-scrollbar { width: 5px; }

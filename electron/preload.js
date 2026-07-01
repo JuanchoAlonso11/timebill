@@ -59,7 +59,11 @@ contextBridge.exposeInMainWorld('timebill', {
   },
 
   dashboard: {
-    getData: (from, to) => ipcRenderer.invoke('dashboard:getData', { from, to }),
+    getData:        (from, to)                 => ipcRenderer.invoke('dashboard:getData', { from, to }),
+    setCobrado:     (ids, cobrado, fechaCobro) => ipcRenderer.invoke('dashboard:setCobrado', { ids, cobrado, fechaCobro }),
+    addManualEntry: (entry)                    => ipcRenderer.invoke('dashboard:addManualEntry', entry),
+    editEntry:      (entry)                    => ipcRenderer.invoke('dashboard:editEntry', entry),
+    getEntryEdits:  (entryId)                  => ipcRenderer.invoke('dashboard:getEntryEdits', entryId),
   },
 
   sync: {

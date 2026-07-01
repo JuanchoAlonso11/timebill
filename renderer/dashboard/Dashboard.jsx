@@ -50,6 +50,34 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })
 }
 
+// fecha_cobro viene como 'YYYY-MM-DD' (tipo date). La parseamos a mano para
+// evitar el corrimiento de día por timezone que hace new Date('YYYY-MM-DD').
+function fmtCobroDate(d) {
+  if (!d) return ''
+  const [, m, day] = d.slice(0, 10).split('-')
+  return `${day}/${m}`
+}
+
+// Helpers para precargar inputs date/time desde un ISO, en hora LOCAL
+function toLocalDateInput(d) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+function toLocalTimeInput(d) {
+  const h = String(d.getHours()).padStart(2, '0')
+  const mi = String(d.getMinutes()).padStart(2, '0')
+  return `${h}:${mi}`
+}
+// Fecha + hora local legible para el historial de cambios
+function fmtFullLocal(iso) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleString('es-AR', {
+    day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit',
+  })
+}
+
 function fmtAmount(sec, rateUsd) {
   if (!sec || !rateUsd) return '—'
   return `$${((sec / 3600) * rateUsd).toFixed(0)} USD`
@@ -85,8 +113,36 @@ export default function Dashboard() {
   const [loading, setLoading]       = useState(true)
   const [generating, setGenerating] = useState(false)
   const [reportResult, setReportResult] = useState(null)
+  const [showReportChoice, setShowReportChoice] = useState(false)
   const [role, setRole]             = useState(null)
   const [adminView, setAdminView]   = useState('area') // 'area' | 'personal'
+
+  // ─── Cobrado (feature 2) ──────────────────────────────────────────────
+  const [selected, setSelected]   = useState(() => new Set()) // ids seleccionados
+  const [cobroDate, setCobroDate] = useState(toISODate(new Date())) // hoy por defecto
+  const [marking, setMarking]     = useState(false)
+
+  // ─── Registro manual (feature 3) ──────────────────────────────────────
+  const [showManualModal, setShowManualModal] = useState(false)
+  const [clientOptions, setClientOptions]     = useState([])
+  const [typeOptions, setTypeOptions]         = useState([])
+  const [mClient, setMClient] = useState('')
+  const [mType, setMType]     = useState('')
+  const [mDate, setMDate]     = useState(toISODate(new Date()))
+  const [mStart, setMStart]   = useState('')
+  const [mEnd, setMEnd]       = useState('')
+  const [mSaving, setMSaving] = useState(false)
+
+  // ─── Edición de tarea (feature 4) ─────────────────────────────────────
+  const [editingEntry, setEditingEntry] = useState(null)
+  const [eClient, setEClient] = useState('')
+  const [eType, setEType]     = useState('')
+  const [eDate, setEDate]     = useState('')
+  const [eStart, setEStart]   = useState('')
+  const [eEnd, setEEnd]       = useState('')
+  const [eNote, setENote]     = useState('')
+  const [eSaving, setESaving] = useState(false)
+  const [editHistory, setEditHistory] = useState([])
 
   const getRange = useCallback(() => {
     if (tab === 'custom') {
@@ -133,16 +189,230 @@ export default function Dashboard() {
   const globalSec = totalSec(filtered)
   const globalAmt = totalAmount(filtered)
 
+  // ─── Cobrado: selección y marcado ─────────────────────────────────────────
+
+  // Limpiar selección al cambiar de vista, cliente o rango (evita ids fantasma)
+  useEffect(() => { setSelected(new Set()) }, [adminView, activeClient, tab, customFrom, customTo])
+
+  const allSelected = filtered.length > 0 && filtered.every(e => selected.has(e.id))
+
+  const toggleAll = () => {
+    setSelected(allSelected ? new Set() : new Set(filtered.map(e => e.id)))
+  }
+
+  const toggleOne = (id) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const markCobrado = async (cobrado) => {
+    const ids = [...selected]
+    if (ids.length === 0) return
+    setMarking(true)
+    try {
+      const res = await window.timebill.dashboard.setCobrado(ids, cobrado, cobrado ? cobroDate : null)
+      if (res?.error) {
+        alert(res.error)
+        return
+      }
+      setSelected(new Set())
+      await load()
+    } catch (e) {
+      console.error('[cobrado] Error:', e)
+      alert('No se pudo actualizar. Revisá la conexión.')
+    } finally {
+      setMarking(false)
+    }
+  }
+
+  // ─── Registro manual ──────────────────────────────────────────────────
+
+  const openManualModal = async () => {
+    setShowManualModal(true)
+    try {
+      const [cls, tps] = await Promise.all([
+        window.timebill.clients.getAll(),
+        window.timebill.config.getTaskTypes(),
+      ])
+      setClientOptions(cls || [])
+      setTypeOptions(tps || [])
+    } catch (e) {
+      console.error('[manual] Error cargando opciones:', e)
+    }
+  }
+
+  // Duración calculada en vivo para el preview (null si los datos no son válidos)
+  const manualDurationSec = (() => {
+    if (!mDate || !mStart || !mEnd) return null
+    const s = new Date(`${mDate}T${mStart}:00`)
+    const e = new Date(`${mDate}T${mEnd}:00`)
+    if (isNaN(s.getTime()) || isNaN(e.getTime()) || e <= s) return null
+    return Math.round((e - s) / 1000)
+  })()
+
+  const saveManual = async () => {
+    if (!mClient) { alert('Elegí un cliente.'); return }
+    if (!mType)   { alert('Elegí un tipo de tarea.'); return }
+    if (!mDate || !mStart || !mEnd) { alert('Completá fecha, hora de inicio y de fin.'); return }
+
+    const startedAt = new Date(`${mDate}T${mStart}:00`)
+    const endedAt   = new Date(`${mDate}T${mEnd}:00`)
+    if (isNaN(startedAt.getTime()) || isNaN(endedAt.getTime())) { alert('Fecha u hora inválida.'); return }
+    if (endedAt <= startedAt) { alert('La hora de fin debe ser posterior a la de inicio.'); return }
+
+    setMSaving(true)
+    try {
+      const res = await window.timebill.dashboard.addManualEntry({
+        clientId: mClient,
+        taskType: mType,
+        startedAt: startedAt.toISOString(),
+        endedAt:   endedAt.toISOString(),
+      })
+      if (res?.error) { alert(res.error); return }
+      setShowManualModal(false)
+      // reset del formulario (la fecha la dejamos en hoy)
+      setMClient(''); setMType(''); setMStart(''); setMEnd(''); setMDate(toISODate(new Date()))
+      await load()
+    } catch (e) {
+      console.error('[manual] Error:', e)
+      alert('No se pudo guardar la tarea.')
+    } finally {
+      setMSaving(false)
+    }
+  }
+
+  // ─── Edición de tarea ─────────────────────────────────────────────────
+
+  const openEditModal = async () => {
+    if (selected.size !== 1) return
+    const id = [...selected][0]
+    const entry = visibleEntries.find(e => e.id === id)
+    if (!entry) return
+
+    const s = new Date(entry.started_at)
+    const e2 = new Date(entry.ended_at)
+    setEditingEntry(entry)
+    setEClient(entry.client_id || '')
+    setEType(entry.task_type || '')
+    setEDate(toLocalDateInput(s))
+    setEStart(toLocalTimeInput(s))
+    setEEnd(toLocalTimeInput(e2))
+    setENote(entry.note || '')
+    setEditHistory([])
+
+    try {
+      const [cls, tps, hist] = await Promise.all([
+        window.timebill.clients.getAll(),
+        window.timebill.config.getTaskTypes(),
+        window.timebill.dashboard.getEntryEdits(id),
+      ])
+      setClientOptions(cls || [])
+      setTypeOptions(tps || [])
+      setEditHistory(hist || [])
+    } catch (e) {
+      console.error('[edit] Error cargando datos:', e)
+    }
+  }
+
+  const editDurationSec = (() => {
+    if (!eDate || !eStart || !eEnd) return null
+    const s = new Date(`${eDate}T${eStart}:00`)
+    const e = new Date(`${eDate}T${eEnd}:00`)
+    if (isNaN(s.getTime()) || isNaN(e.getTime()) || e <= s) return null
+    return Math.round((e - s) / 1000)
+  })()
+
+  const saveEdit = async () => {
+    if (!editingEntry) return
+    if (!eClient) { alert('Elegí un cliente.'); return }
+    if (!eType)   { alert('Elegí un tipo de tarea.'); return }
+    if (!eDate || !eStart || !eEnd) { alert('Completá fecha y horas.'); return }
+
+    const startedAt = new Date(`${eDate}T${eStart}:00`)
+    const endedAt   = new Date(`${eDate}T${eEnd}:00`)
+    if (isNaN(startedAt.getTime()) || isNaN(endedAt.getTime())) { alert('Fecha u hora inválida.'); return }
+    if (endedAt <= startedAt) { alert('La hora de fin debe ser posterior a la de inicio.'); return }
+
+    // Calcular el diff legible (campo, viejo → nuevo) solo de lo que cambió
+    const orig = editingEntry
+    const changes = []
+
+    if (eClient !== (orig.client_id || '')) {
+      const oldName = orig.client_name || orig.client_id || '(ninguno)'
+      const newName = clientOptions.find(c => c.id === eClient)?.name || eClient
+      changes.push({ field: 'cliente', oldValue: oldName, newValue: newName })
+    }
+    if (eType !== (orig.task_type || '')) {
+      const oldLabel = typeOptions.find(t => t.value === orig.task_type)?.label || orig.task_type || '(ninguno)'
+      const newLabel = typeOptions.find(t => t.value === eType)?.label || eType
+      changes.push({ field: 'tipo', oldValue: oldLabel, newValue: newLabel })
+    }
+    if (startedAt.toISOString() !== new Date(orig.started_at).toISOString()) {
+      changes.push({ field: 'inicio', oldValue: fmtFullLocal(orig.started_at), newValue: fmtFullLocal(startedAt.toISOString()) })
+    }
+    if (endedAt.toISOString() !== new Date(orig.ended_at).toISOString()) {
+      changes.push({ field: 'fin', oldValue: fmtFullLocal(orig.ended_at), newValue: fmtFullLocal(endedAt.toISOString()) })
+    }
+    if ((eNote || '') !== (orig.note || '')) {
+      changes.push({ field: 'nota', oldValue: orig.note || '(vacío)', newValue: eNote || '(vacío)' })
+    }
+
+    if (changes.length === 0) {
+      setEditingEntry(null)
+      setSelected(new Set())
+      return
+    }
+
+    setESaving(true)
+    try {
+      const res = await window.timebill.dashboard.editEntry({
+        id: orig.id,
+        clientId: eClient,
+        taskType: eType,
+        startedAt: startedAt.toISOString(),
+        endedAt:   endedAt.toISOString(),
+        note: eNote || null,
+        changes,
+      })
+      if (res?.error) { alert(res.error); return }
+      setEditingEntry(null)
+      setSelected(new Set())
+      await load()
+    } catch (e) {
+      console.error('[edit] Error:', e)
+      alert('No se pudo editar la tarea.')
+    } finally {
+      setESaving(false)
+    }
+  }
+
   // ─── Reporte ────────────────────────────────────────────────────────────────
 
-  const generateReport = async () => {
-    if (activeClient === 'all' || filtered.length === 0) return
+  const generateReport = async (cobroFilter = 'all') => {
+    if (activeClient === 'all') return
+
+    // Filtrar por estado de cobro según lo elegido en el popup
+    const reportEntries = cobroFilter === 'pending'
+      ? filtered.filter(e => !e.cobrado)
+      : filtered
+
+    setShowReportChoice(false)
+
+    if (reportEntries.length === 0) {
+      alert('No hay entradas para ese filtro en este período.')
+      return
+    }
+
     setGenerating(true)
     try {
       const { from, to } = getRange()
       const client = clients.find(c => c.id === activeClient)
       const result = await window.timebill.report.generate({
-        entries: filtered,
+        entries: reportEntries,
         clientName: client?.name || activeClient,
         from,
         to,
@@ -182,7 +452,7 @@ export default function Dashboard() {
       {/* Topbar */}
       <header className="topbar">
         <div className="topbar-left">
-          <span className="logo">TimeBill</span>
+          <span className="logo">Smart Hours</span>
           <div className="sep" />
           <div className="range-tabs">
             {RANGE_TABS.map(t => (
@@ -214,6 +484,7 @@ export default function Dashboard() {
               >Mis horas</button>
             </div>
           )}
+          <button className="refresh-btn" onClick={openManualModal} style={{ marginRight: 8 }}>+ Registrar tarea</button>
           <button className="refresh-btn" onClick={load}>↻ Actualizar</button>
         </div>
       </header>
@@ -276,7 +547,7 @@ export default function Dashboard() {
                 <div className="summary-bar-sep" />
                 <button
                   className={`report-btn${generating ? ' report-btn-loading' : ''}`}
-                  onClick={generateReport}
+                  onClick={() => setShowReportChoice(true)}
                   disabled={generating || filtered.length === 0}
                 >
                   {generating ? '⏳ Generando…' : '📄 Generar reporte'}
@@ -284,6 +555,182 @@ export default function Dashboard() {
               </>
             )}
           </div>
+
+          {/* Popup: elegir qué incluir en el reporte */}
+          {showReportChoice && (
+            <div className="report-modal-overlay" onClick={() => setShowReportChoice(false)}>
+              <div className="report-modal" onClick={e => e.stopPropagation()}>
+                <div className="report-modal-title">¿Qué incluir en el reporte?</div>
+                <div className="report-modal-actions" style={{ flexDirection: 'column', gap: 8 }}>
+                  <button className="report-action-btn report-action-save" onClick={() => generateReport('all')}>
+                    Todas las horas ({filtered.length})
+                  </button>
+                  <button className="report-action-btn report-action-wa" onClick={() => generateReport('pending')}>
+                    Solo pendientes de cobro ({filtered.filter(e => !e.cobrado).length})
+                  </button>
+                </div>
+                <button className="report-modal-close" onClick={() => setShowReportChoice(false)}>Cancelar</button>
+              </div>
+            </div>
+          )}
+
+          {/* Modal: registrar tarea manual */}
+          {showManualModal && (
+            <div className="report-modal-overlay" onClick={() => !mSaving && setShowManualModal(false)}>
+              <div className="report-modal" onClick={e => e.stopPropagation()} style={{ width: 360 }}>
+                <div className="report-modal-title" style={{ marginBottom: 14 }}>Registrar tarea</div>
+
+                <div className="manual-form">
+                  <label className="manual-field-label">
+                    Cliente
+                    <select className="manual-field" value={mClient} onChange={e => setMClient(e.target.value)}>
+                      <option value="">— Elegí un cliente —</option>
+                      {clientOptions.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="manual-field-label">
+                    Tipo de tarea
+                    <select className="manual-field" value={mType} onChange={e => setMType(e.target.value)}>
+                      <option value="">— Elegí un tipo —</option>
+                      {typeOptions.map(t => (
+                        <option key={t.value} value={t.value}>{t.label}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="manual-field-label">
+                    Fecha
+                    <input className="manual-field" type="date" value={mDate} onChange={e => setMDate(e.target.value)} />
+                  </label>
+
+                  <div className="manual-row">
+                    <label className="manual-field-label">
+                      Hora inicio
+                      <input className="manual-field" type="time" value={mStart} onChange={e => setMStart(e.target.value)} />
+                    </label>
+                    <label className="manual-field-label">
+                      Hora fin
+                      <input className="manual-field" type="time" value={mEnd} onChange={e => setMEnd(e.target.value)} />
+                    </label>
+                  </div>
+
+                  <div className="manual-duration">
+                    {manualDurationSec !== null
+                      ? <>Duración: <strong>{fmtDuration(manualDurationSec)}</strong></>
+                      : (mStart && mEnd ? 'La hora de fin debe ser posterior a la de inicio.' : 'Completá las horas para ver la duración.')}
+                  </div>
+                </div>
+
+                <div className="report-modal-actions" style={{ marginTop: 16 }}>
+                  <button
+                    className="report-action-btn report-action-save"
+                    onClick={saveManual}
+                    disabled={mSaving}
+                    style={{ opacity: mSaving ? 0.6 : 1 }}
+                  >
+                    {mSaving ? '⏳ Guardando…' : '💾 Guardar tarea'}
+                  </button>
+                </div>
+                <button className="report-modal-close" onClick={() => !mSaving && setShowManualModal(false)}>Cancelar</button>
+              </div>
+            </div>
+          )}
+
+          {/* Modal: editar tarea */}
+          {editingEntry && (
+            <div className="report-modal-overlay" onClick={() => !eSaving && setEditingEntry(null)}>
+              <div className="report-modal" onClick={e => e.stopPropagation()} style={{ width: 400 }}>
+                <div className="report-modal-title" style={{ marginBottom: 14 }}>Editar tarea</div>
+
+                <div className="manual-form">
+                  <label className="manual-field-label">
+                    Cliente
+                    <select className="manual-field" value={eClient} onChange={e => setEClient(e.target.value)}>
+                      <option value="">— Elegí un cliente —</option>
+                      {clientOptions.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="manual-field-label">
+                    Tipo de tarea
+                    <select className="manual-field" value={eType} onChange={e => setEType(e.target.value)}>
+                      <option value="">— Elegí un tipo —</option>
+                      {typeOptions.map(t => (
+                        <option key={t.value} value={t.value}>{t.label}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="manual-field-label">
+                    Fecha
+                    <input className="manual-field" type="date" value={eDate} onChange={e => setEDate(e.target.value)} />
+                  </label>
+
+                  <div className="manual-row">
+                    <label className="manual-field-label">
+                      Hora inicio
+                      <input className="manual-field" type="time" value={eStart} onChange={e => setEStart(e.target.value)} />
+                    </label>
+                    <label className="manual-field-label">
+                      Hora fin
+                      <input className="manual-field" type="time" value={eEnd} onChange={e => setEEnd(e.target.value)} />
+                    </label>
+                  </div>
+
+                  <label className="manual-field-label">
+                    Nota / observación
+                    <textarea
+                      className="manual-field"
+                      rows={2}
+                      value={eNote}
+                      onChange={e => setENote(e.target.value)}
+                      placeholder="Opcional"
+                      style={{ resize: 'vertical', fontFamily: 'var(--font-sans)' }}
+                    />
+                  </label>
+
+                  <div className="manual-duration">
+                    {editDurationSec !== null
+                      ? <>Duración: <strong>{fmtDuration(editDurationSec)}</strong></>
+                      : 'La hora de fin debe ser posterior a la de inicio.'}
+                  </div>
+
+                  {editHistory.length > 0 && (
+                    <div className="edit-history">
+                      <div className="edit-history-title">Historial de cambios</div>
+                      {editHistory.map(h => (
+                        <div key={h.id} className="edit-history-row">
+                          <span className="edit-history-meta">
+                            {fmtFullLocal(h.edited_at)} · {h.editor_email || 'usuario'}
+                          </span>
+                          <span className="edit-history-change">
+                            <strong>{h.field}</strong>: {h.old_value || '(vacío)'} → {h.new_value || '(vacío)'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="report-modal-actions" style={{ marginTop: 16 }}>
+                  <button
+                    className="report-action-btn report-action-save"
+                    onClick={saveEdit}
+                    disabled={eSaving}
+                    style={{ opacity: eSaving ? 0.6 : 1 }}
+                  >
+                    {eSaving ? '⏳ Guardando…' : '💾 Guardar cambios'}
+                  </button>
+                </div>
+                <button className="report-modal-close" onClick={() => !eSaving && setEditingEntry(null)}>Cancelar</button>
+              </div>
+            </div>
+          )}
 
           {/* Modal reporte */}
           {reportResult && (
@@ -305,6 +752,89 @@ export default function Dashboard() {
             </div>
           )}
 
+          {/* Barra de cobro (solo admin, cuando hay selección) */}
+          {selected.size > 0 && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+              padding: '10px 14px', marginBottom: 10,
+              background: 'rgba(52, 211, 153, 0.08)',
+              border: '1px solid rgba(52, 211, 153, 0.25)',
+              borderRadius: 8,
+            }}>
+              <span style={{ fontWeight: 600, fontSize: 13 }}>
+                {selected.size} seleccionada{selected.size !== 1 ? 's' : ''}
+              </span>
+
+              {/* Controles de cobro: solo admin */}
+              {role === 'admin' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <label style={{ fontSize: 12, color: 'var(--text-dim)' }}>Fecha de cobro:</label>
+                  <input
+                    type="date"
+                    className="date-input"
+                    value={cobroDate}
+                    onChange={e => setCobroDate(e.target.value)}
+                  />
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
+                {/* Editar: cuando hay exactamente una seleccionada (cualquier rol) */}
+                {selected.size === 1 && (
+                  <button
+                    onClick={openEditModal}
+                    style={{
+                      padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+                      background: 'var(--accent)', color: '#fff', border: 'none',
+                      fontWeight: 600, fontSize: 12,
+                    }}
+                  >
+                    ✏️ Editar
+                  </button>
+                )}
+
+                {role === 'admin' && (
+                  <>
+                    <button
+                      onClick={() => markCobrado(true)}
+                      disabled={marking}
+                      style={{
+                        padding: '6px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                        background: '#10b981', color: '#04241a', fontWeight: 600, fontSize: 12,
+                        opacity: marking ? 0.6 : 1,
+                      }}
+                    >
+                      {marking ? '⏳…' : '✓ Marcar cobradas'}
+                    </button>
+                    <button
+                      onClick={() => markCobrado(false)}
+                      disabled={marking}
+                      style={{
+                        padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+                        background: 'transparent', color: 'var(--text-dim)',
+                        border: '1px solid rgba(255,255,255,0.15)', fontSize: 12,
+                        opacity: marking ? 0.6 : 1,
+                      }}
+                    >
+                      Marcar pendientes
+                    </button>
+                  </>
+                )}
+
+                <button
+                  onClick={() => setSelected(new Set())}
+                  style={{
+                    padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+                    background: 'transparent', color: 'var(--text-dim)',
+                    border: '1px solid rgba(255,255,255,0.15)', fontSize: 12,
+                  }}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Tabla */}
           <div className="table-wrap">
             {loading ? (
@@ -318,6 +848,14 @@ export default function Dashboard() {
               <table>
                 <thead>
                   <tr>
+                    <th style={{ width: 28 }}>
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={toggleAll}
+                        title="Seleccionar todo"
+                      />
+                    </th>
                     <th>Fecha</th>
                     <th>Inicio</th>
                     <th>Fin</th>
@@ -327,17 +865,28 @@ export default function Dashboard() {
                     <th>Duración</th>
                     <th>Importe</th>
                     <th>Origen</th>
+                    {role === 'admin' && <th>Cobrado</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.map(e => (
-                    <tr key={e.id}>
+                    <tr
+                      key={e.id}
+                      style={{ background: selected.has(e.id) ? 'rgba(52,211,153,0.06)' : undefined }}
+                    >
+                      <td style={{ width: 28 }}>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(e.id)}
+                          onChange={() => toggleOne(e.id)}
+                        />
+                      </td>
                       <td className="td-mono">{fmtDate(e.started_at)}</td>
                       <td className="td-mono">{fmtTime(e.started_at)}</td>
                       <td className="td-mono">{fmtTime(e.ended_at)}</td>
                       <td className="td-client">{e.client_name || '—'}</td>
                       {role === 'admin' && adminView === 'area' && (
-                        <td style={{ fontSize: 11, color: e.is_own ? 'var(--color-text-info)' : 'var(--color-text-secondary)' }}>
+                        <td style={{ fontSize: 11, color: e.is_own ? 'var(--accent)' : 'var(--text-dim)' }}>
                           {e.is_own ? 'Yo' : (e.user_email || '—')}
                         </td>
                       )}
@@ -349,6 +898,19 @@ export default function Dashboard() {
                           {e.source === 'manual' ? 'manual' : 'auto'}
                         </span>
                       </td>
+                      {role === 'admin' && (
+                        <td>
+                          {e.cobrado ? (
+                            <span style={{ color: '#34d399', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                              ✓ {fmtCobroDate(e.fecha_cobro)}
+                            </span>
+                          ) : (
+                            <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>
+                              Pendiente
+                            </span>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
