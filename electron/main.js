@@ -41,12 +41,22 @@ if (!gotLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    // Si se intenta abrir una segunda instancia, traemos la ventana principal al frente
+    // Al intentar abrir otra instancia (acceso directo, buscador), traemos la app al frente.
+    // La ventana pudo haberse cerrado (queda solo el tray), así que la recreamos como hace el tray.
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
       mainWindow.focus()
+    } else if (currentUser) {
+      // Sesión iniciada pero ventana cerrada → recrear la ventana principal
+      showMainWindow()
     } else if (loginWindow && !loginWindow.isDestroyed()) {
+      if (loginWindow.isMinimized()) loginWindow.restore()
+      loginWindow.show()
       loginWindow.focus()
+    } else {
+      // Sin sesión y sin ventana de login → recrearla
+      showLoginWindow()
     }
   })
 }
@@ -254,7 +264,9 @@ function showOnboardingWindow() {
 
 function showMainWindow() {
   if (mainWindow) {
-    mainWindow.isMinimized() ? mainWindow.restore() : mainWindow.focus()
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
     return
   }
 
