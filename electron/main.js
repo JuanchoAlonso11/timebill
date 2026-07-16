@@ -823,7 +823,7 @@ function setupIPC() {
     const { createClient } = require('@supabase/supabase-js')
     const sb = createClient(SUPABASE_URL, SUPABASE_ANON)
     const { error } = await sb.auth.resetPasswordForEmail(email, {
-      redirectTo: 'https://smarthours-reset.netlify.app/reset-password.html',
+      redirectTo: 'https://smarthours-app.netlify.app/reset',
     })
     return { error: error?.message ?? null }
   })
