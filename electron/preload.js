@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld('timebill', {
     addManualEntry: (entry)                    => ipcRenderer.invoke('dashboard:addManualEntry', entry),
     editEntry:      (entry)                    => ipcRenderer.invoke('dashboard:editEntry', entry),
     getEntryEdits:  (entryId)                  => ipcRenderer.invoke('dashboard:getEntryEdits', entryId),
+    setEntryBlue:   (ids, blueVenta)           => ipcRenderer.invoke('dashboard:setEntryBlue', { ids, blueVenta }),
   },
 
   sync: {

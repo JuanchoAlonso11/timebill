@@ -758,15 +758,17 @@ function setupIPC() {
     return entry
   })
 
-  ipcMain.handle('manual:saveRetro', (_, { clientId, taskType, minutesAgo }) => {
+  ipcMain.handle('manual:saveRetro', async (_, { clientId, taskType, minutesAgo }) => {
     const { randomUUID } = require('crypto')
+    const { getBlueVenta } = require('./blue')
     const now = Date.now()
     const startedAt = new Date(now - minutesAgo * 60 * 1000).toISOString()
     const endedAt = new Date(now).toISOString()
     const durationSec = minutesAgo * 60
     const id = randomUUID()
+    const blue = await getBlueVenta()
     insertEntry({ id, client_id: clientId, task_type: taskType, started_at: startedAt, window_title: null, source: 'manual' })
-    closeEntry({ id, ended_at: endedAt, duration_sec: durationSec })
+    closeEntry({ id, ended_at: endedAt, duration_sec: durationSec, blue_venta: blue })
     popupWindow?.close()
     popupWindow = null
     console.log('[manual] Entrada retroactiva guardada:', minutesAgo, 'minutos')
@@ -1001,6 +1003,61 @@ function setupIPC() {
     return { ok: true, updated }
   })
 
+  ipcMain.handle('dashboard:setEntryBlue', async (_, { ids, blueVenta }) => {
+    const membership = currentUser ? store.get(`membership-${currentUser.id}`, {}) : {}
+    const role   = membership.role   || null
+    const areaId = membership.areaId || null
+
+    if (!currentUser)               return { error: 'No hay sesión activa.' }
+    if (!supabaseClient || !areaId) return { error: 'No hay conexión con el servidor.' }
+    if (!Array.isArray(ids) || ids.length === 0) return { error: 'No se seleccionaron tareas.' }
+
+    const venta = Number(blueVenta)
+    if (!Number.isFinite(venta) || venta <= 0) {
+      return { error: 'Ingresá una cotización válida (mayor a 0).' }
+    }
+
+    // Admin: cualquier tarea de su área. Empleado: solo las propias.
+    let q = supabaseClient
+      .from('time_entries')
+      .update({ blue_venta: venta })
+      .in('id', ids)
+      .eq('area_id', areaId)
+    if (role !== 'admin') q = q.eq('user_id', currentUser.id)
+
+    const { data, error } = await q.select('id')
+    if (error) {
+      console.error('[blue] Error seteando cotización:', error.message)
+      return { error: error.message }
+    }
+    const updated = data?.length || 0
+    if (updated === 0) {
+      return { error: 'No se actualizó ninguna tarea (sin permisos o fuera de tu área).' }
+    }
+
+    // Auditoría: queda registrado en el historial de la tarea
+    try {
+      const { randomUUID } = require('crypto')
+      const editGroup = randomUUID()
+      const rows = data.map(r => ({
+        entry_id:   r.id,
+        edited_by:  currentUser.id,
+        field:      'cotizacion',
+        old_value:  null,
+        new_value:  String(venta),
+        area_id:    areaId,
+        edit_group: editGroup,
+      }))
+      const { error: histErr } = await supabaseClient.from('entry_edits').insert(rows)
+      if (histErr) console.error('[blue] Error guardando historial:', histErr.message)
+    } catch (e) {
+      console.error('[blue] Error inesperado en historial:', e.message)
+    }
+
+    console.log('[blue] Cotización seteada a mano:', venta, '| tareas:', updated)
+    return { ok: true, updated }
+  })
+
   ipcMain.handle('dashboard:addManualEntry', async (_, { clientId, taskType, startedAt, endedAt }) => {
     if (!currentUser)            return { error: 'No hay sesión activa.' }
     if (!clientId)               return { error: 'Elegí un cliente.' }
@@ -1028,12 +1085,15 @@ function setupIPC() {
     const id = randomUUID()
 
     try {
+      // Congelar cotización del blue al momento de registrar
+      const { getBlueVenta } = require('./blue')
+      const blue = await getBlueVenta()
       // Mismo patrón que manual:saveRetro → guarda en SQLite local
       insertEntry({ id, client_id: clientId, task_type: taskType, started_at: start.toISOString(), window_title: null, source: 'manual' })
-      closeEntry({ id, ended_at: end.toISOString(), duration_sec: durationSec })
+      closeEntry({ id, ended_at: end.toISOString(), duration_sec: durationSec, blue_venta: blue })
       // Empujar a Supabase para que aparezca en el dashboard sin esperar al sync periódico
       try { await syncNow() } catch (e) { console.error('[manual] syncNow falló:', e.message) }
-      console.log('[manual] Entrada manual guardada:', durationSec, 'seg')
+      console.log('[manual] Entrada manual guardada:', durationSec, 'seg | blue:', blue)
       return { ok: true, id, durationSec }
     } catch (e) {
       console.error('[manual] Error guardando:', e.message)
@@ -1132,8 +1192,11 @@ function setupIPC() {
     return pendingReportData
   })
 
-  ipcMain.handle('report:generate', async (_, { entries, clientName, from, to }) => {
-    pendingReportData = { entries, clientName, from, to }
+  ipcMain.handle('report:generate', async (_, { entries, clientName, from, to, currency }) => {
+    // Nombre de la organización (estudio) que emite el informe; el PDF lo usa como encabezado
+    const membership = currentUser ? store.get(`membership-${currentUser.id}`, {}) : {}
+    const orgName = membership.orgName || ''
+    pendingReportData = { entries, clientName, from, to, currency: currency || 'usd', orgName }
 
     const reportWin = new BrowserWindow({
       width: 794,

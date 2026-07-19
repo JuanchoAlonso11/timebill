@@ -1,6 +1,6 @@
 {
   "name": "smart-hours",
-  "version": "1.5.2",
+  "version": "1.6.0",
   "description": "Tracking inteligente de horas profesionales",
   "main": "electron/main.js",
   "scripts": {

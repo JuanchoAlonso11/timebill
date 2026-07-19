@@ -77,6 +77,22 @@ function stopEntry() {
   if (durationSec >= 30) {
     closeEntry({ id: activeEntry.id, ended_at: endedAt, duration_sec: durationSec })
     console.log('[timer] Entrada guardada:', durationSec, 'segundos facturables')
+
+    // Congelar cotización del blue (async, no bloquea el cierre de la tarea).
+    // Si no hay internet queda en null y se reintenta en el sync.
+    const entryId = activeEntry.id
+    const { getBlueVenta } = require('./blue')
+    const { setEntryBlue } = require('./db')
+    getBlueVenta()
+      .then(v => {
+        if (v) {
+          setEntryBlue(entryId, v)
+          console.log('[timer] Blue congelado:', v, 'para', entryId)
+        } else {
+          console.log('[timer] Sin cotización blue (offline); se reintenta en el sync')
+        }
+      })
+      .catch(e => console.error('[timer] Error congelando blue:', e.message))
   } else {
     console.log('[timer] Entrada descartada (menos de 30s)')
   }

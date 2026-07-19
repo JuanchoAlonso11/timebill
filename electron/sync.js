@@ -108,6 +108,7 @@ async function syncEntries() {
     source:       e.source,
     window_title: e.window_title,
     note:         e.note,
+    blue_venta:   e.blue_venta,
     user_id:      currentUserId,
     area_id:      currentAreaId,
   }))
@@ -119,9 +120,28 @@ async function syncEntries() {
   console.log('[sync] OK —', entries.length, 'entradas sincronizadas')
 }
 
+// Rellena la cotización de tareas recientes (últimas 48hs) que quedaron sin blue
+// (registradas offline). Usa la cotización ACTUAL al momento de reconectar.
+async function retryMissingBlue() {
+  const { getEntriesNeedingBlue, setEntryBlue } = require('./db')
+  const since = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+  const ids = getEntriesNeedingBlue(since)
+  if (ids.length === 0) return
+
+  const { getBlueVenta } = require('./blue')
+  const venta = await getBlueVenta()
+  if (!venta) {
+    console.log('[sync] Reintento blue: aún sin cotización (offline)')
+    return
+  }
+  for (const id of ids) setEntryBlue(id, venta)
+  console.log('[sync] Blue reintentado en', ids.length, 'tarea(s) con', venta)
+}
+
 async function runSync() {
   try {
     await syncClients()
+    await retryMissingBlue()   // rellena blue faltante antes de subir las entradas
     await syncEntries()
     reportStatus(true)
   } catch (err) {

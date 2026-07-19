@@ -49,6 +49,7 @@ function initSchema() {
       source       TEXT NOT NULL DEFAULT 'auto',
       window_title TEXT,
       note         TEXT,
+      blue_venta   REAL,
       synced       INTEGER NOT NULL DEFAULT 0,
       created_at   TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -57,6 +58,16 @@ function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_entries_started ON time_entries(started_at);
     CREATE INDEX IF NOT EXISTS idx_entries_synced ON time_entries(synced);
   `)
+  migrate()
+}
+
+// Migraciones para DBs ya existentes (ALTER no soporta IF NOT EXISTS en SQLite)
+function migrate() {
+  const cols = db.prepare(`PRAGMA table_info(time_entries)`).all().map(c => c.name)
+  if (!cols.includes('blue_venta')) {
+    db.exec(`ALTER TABLE time_entries ADD COLUMN blue_venta REAL`)
+    console.log('[db] Migración: columna blue_venta agregada a time_entries')
+  }
 }
 
 // --- Clients ---
@@ -110,12 +121,34 @@ function insertEntry({ id, client_id, task_type, started_at, window_title, sourc
   `).run({ id, client_id, task_type, started_at, window_title, source })
 }
 
-function closeEntry({ id, ended_at, duration_sec }) {
+function closeEntry({ id, ended_at, duration_sec, blue_venta = null }) {
   getDb().prepare(`
     UPDATE time_entries
-    SET ended_at = @ended_at, duration_sec = @duration_sec
+    SET ended_at = @ended_at, duration_sec = @duration_sec, blue_venta = @blue_venta
     WHERE id = @id
-  `).run({ id, ended_at, duration_sec })
+  `).run({ id, ended_at, duration_sec, blue_venta })
+}
+
+// Setea/actualiza la cotización congelada de una tarea y la marca para re-sincronizar.
+function setEntryBlue(id, blue_venta) {
+  getDb().prepare(`
+    UPDATE time_entries
+    SET blue_venta = @blue_venta, synced = 0
+    WHERE id = @id
+  `).run({ id, blue_venta })
+}
+
+// Tareas cerradas SIN cotización congelada (blue_venta null), desde una fecha en adelante.
+// Se usa para el reintento offline: solo tareas recientes.
+function getEntriesNeedingBlue(sinceISO) {
+  return getDb().prepare(`
+    SELECT id FROM time_entries
+    WHERE blue_venta IS NULL
+      AND ended_at IS NOT NULL
+      AND started_at >= ?
+    ORDER BY started_at DESC
+    LIMIT 50
+  `).all(sinceISO).map(r => r.id)
 }
 
 function getEntriesInRange(fromDate, toDate) {
@@ -169,6 +202,8 @@ module.exports = {
   setClientRules,
   insertEntry,
   closeEntry,
+  setEntryBlue,
+  getEntriesNeedingBlue,
   getEntriesInRange,
   getEntriesForClient,
   getUnsyncedEntries,

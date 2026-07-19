@@ -83,6 +83,13 @@ function fmtAmount(sec, rateUsd) {
   return `$${((sec / 3600) * rateUsd).toFixed(0)} USD`
 }
 
+// Monto en pesos con la cotización del blue CONGELADA al momento de la tarea.
+function fmtArs(sec, rateUsd, blueVenta) {
+  if (!sec || !rateUsd || !blueVenta) return '—'
+  const ars = (sec / 3600) * rateUsd * blueVenta
+  return `$${Math.round(ars).toLocaleString('es-AR')}`
+}
+
 function totalSec(entries) {
   return entries.reduce((acc, e) => acc + (e.duration_sec || 0), 0)
 }
@@ -114,6 +121,12 @@ export default function Dashboard() {
   const [generating, setGenerating] = useState(false)
   const [reportResult, setReportResult] = useState(null)
   const [showReportChoice, setShowReportChoice] = useState(false)
+  const [reportCurrency, setReportCurrency] = useState('usd') // 'usd' | 'ars' | 'ambos'
+
+  // ─── Cotización manual (fase C) ───────────────────────────────────────
+  const [showBlueModal, setShowBlueModal] = useState(false)
+  const [blueInput, setBlueInput] = useState('')
+  const [blueSaving, setBlueSaving] = useState(false)
   const [role, setRole]             = useState(null)
   const [adminView, setAdminView]   = useState('area') // 'area' | 'personal'
 
@@ -226,6 +239,30 @@ export default function Dashboard() {
       alert('No se pudo actualizar. Revisá la conexión.')
     } finally {
       setMarking(false)
+    }
+  }
+
+  // ─── Cotización manual ────────────────────────────────────────────────
+
+  const saveBlue = async () => {
+    const val = Number(String(blueInput).replace(',', '.'))
+    if (!Number.isFinite(val) || val <= 0) {
+      alert('Ingresá una cotización válida (mayor a 0).')
+      return
+    }
+    setBlueSaving(true)
+    try {
+      const res = await window.timebill.dashboard.setEntryBlue([...selected], val)
+      if (res?.error) { alert(res.error); return }
+      setShowBlueModal(false)
+      setBlueInput('')
+      setSelected(new Set())
+      await load()
+    } catch (e) {
+      console.error('[blue] Error:', e)
+      alert('No se pudo guardar la cotización.')
+    } finally {
+      setBlueSaving(false)
     }
   }
 
@@ -407,6 +444,17 @@ export default function Dashboard() {
       return
     }
 
+    // Si el reporte incluye pesos, todas las entradas necesitan cotización congelada
+    if (reportCurrency !== 'usd') {
+      const sinCotizacion = reportEntries.filter(e => !e.blue_venta).length
+      if (sinCotizacion > 0) {
+        const seguir = confirm(
+          `${sinCotizacion} de ${reportEntries.length} tarea(s) no tienen cotización congelada y van a figurar sin monto en pesos.\n\n¿Generar igual?`
+        )
+        if (!seguir) return
+      }
+    }
+
     setGenerating(true)
     try {
       const { from, to } = getRange()
@@ -416,6 +464,7 @@ export default function Dashboard() {
         clientName: client?.name || activeClient,
         from,
         to,
+        currency: reportCurrency,
       })
       setReportResult(result)
     } catch (e) {
@@ -559,17 +608,96 @@ export default function Dashboard() {
           {/* Popup: elegir qué incluir en el reporte */}
           {showReportChoice && (
             <div className="report-modal-overlay" onClick={() => setShowReportChoice(false)}>
-              <div className="report-modal" onClick={e => e.stopPropagation()}>
-                <div className="report-modal-title">¿Qué incluir en el reporte?</div>
-                <div className="report-modal-actions" style={{ flexDirection: 'column', gap: 8 }}>
-                  <button className="report-action-btn report-action-save" onClick={() => generateReport('all')}>
-                    Todas las horas ({filtered.length})
-                  </button>
-                  <button className="report-action-btn report-action-wa" onClick={() => generateReport('pending')}>
-                    Solo pendientes de cobro ({filtered.filter(e => !e.cobrado).length})
+              <div className="report-modal" onClick={e => e.stopPropagation()} style={{ width: 360 }}>
+                <div className="report-modal-title">Generar reporte</div>
+
+                {/* Moneda */}
+                <div style={{ width: '100%', marginTop: 10 }}>
+                  <div style={{
+                    fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '.08em',
+                    textTransform: 'uppercase', color: 'var(--text-dim)', marginBottom: 6,
+                  }}>Moneda</div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {[
+                      { key: 'usd',   label: 'Solo USD' },
+                      { key: 'ars',   label: 'Solo ARS' },
+                      { key: 'ambos', label: 'Ambas' },
+                    ].map(opt => (
+                      <button
+                        key={opt.key}
+                        onClick={() => setReportCurrency(opt.key)}
+                        style={{
+                          flex: 1, padding: '7px 6px', borderRadius: 6, cursor: 'pointer', fontSize: 12,
+                          fontWeight: reportCurrency === opt.key ? 600 : 400,
+                          background: reportCurrency === opt.key ? 'var(--accent)' : 'transparent',
+                          color: reportCurrency === opt.key ? '#fff' : 'var(--text-dim)',
+                          border: `1px solid ${reportCurrency === opt.key ? 'var(--accent)' : 'rgba(255,255,255,0.15)'}`,
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Alcance */}
+                <div style={{ width: '100%', marginTop: 14 }}>
+                  <div style={{
+                    fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '.08em',
+                    textTransform: 'uppercase', color: 'var(--text-dim)', marginBottom: 6,
+                  }}>Qué incluir</div>
+                  <div className="report-modal-actions" style={{ flexDirection: 'column', gap: 8, marginTop: 0 }}>
+                    <button className="report-action-btn report-action-save" onClick={() => generateReport('all')}>
+                      Todas las horas ({filtered.length})
+                    </button>
+                    <button className="report-action-btn report-action-wa" onClick={() => generateReport('pending')}>
+                      Solo pendientes de cobro ({filtered.filter(e => !e.cobrado).length})
+                    </button>
+                  </div>
+                </div>
+
+                <button className="report-modal-close" onClick={() => setShowReportChoice(false)}>Cancelar</button>
+              </div>
+            </div>
+          )}
+
+          {/* Modal: setear cotización a mano */}
+          {showBlueModal && (
+            <div className="report-modal-overlay" onClick={() => !blueSaving && setShowBlueModal(false)}>
+              <div className="report-modal" onClick={e => e.stopPropagation()} style={{ width: 340 }}>
+                <div className="report-modal-title" style={{ marginBottom: 6 }}>Setear cotización</div>
+                <div style={{ fontSize: 12, color: 'var(--text-dim)', textAlign: 'center', marginBottom: 12 }}>
+                  Se aplica a {selected.size} tarea{selected.size !== 1 ? 's' : ''} seleccionada{selected.size !== 1 ? 's' : ''}.
+                </div>
+
+                <div className="manual-form">
+                  <label className="manual-field-label">
+                    Dólar blue (venta)
+                    <input
+                      className="manual-field"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="Ej: 1350"
+                      value={blueInput}
+                      onChange={e => setBlueInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && !blueSaving) saveBlue() }}
+                      autoFocus
+                    />
+                  </label>
+                </div>
+
+                <div className="report-modal-actions" style={{ marginTop: 14 }}>
+                  <button
+                    className="report-action-btn report-action-save"
+                    onClick={saveBlue}
+                    disabled={blueSaving}
+                    style={{ opacity: blueSaving ? 0.6 : 1 }}
+                  >
+                    {blueSaving ? '⏳ Guardando…' : '💾 Aplicar cotización'}
                   </button>
                 </div>
-                <button className="report-modal-close" onClick={() => setShowReportChoice(false)}>Cancelar</button>
+                <button className="report-modal-close" onClick={() => !blueSaving && setShowBlueModal(false)}>Cancelar</button>
               </div>
             </div>
           )}
@@ -779,6 +907,17 @@ export default function Dashboard() {
               )}
 
               <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
+                {/* Setear cotización a mano (ambos roles) */}
+                <button
+                  onClick={() => { setBlueInput(''); setShowBlueModal(true) }}
+                  style={{
+                    padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+                    background: 'transparent', color: 'var(--text)',
+                    border: '1px solid rgba(255,255,255,0.15)', fontSize: 12,
+                  }}
+                >
+                  💵 Cotización
+                </button>
                 {/* Editar: cuando hay exactamente una seleccionada (cualquier rol) */}
                 {selected.size === 1 && (
                   <button
@@ -862,8 +1001,10 @@ export default function Dashboard() {
                     <th>Cliente</th>
                     {role === 'admin' && adminView === 'area' && <th>Empleado</th>}
                     <th>Tipo</th>
+                    <th>Nota</th>
                     <th>Duración</th>
                     <th>Importe</th>
+                    <th>ARS (blue)</th>
                     <th>Origen</th>
                     {role === 'admin' && <th>Cobrado</th>}
                   </tr>
@@ -891,8 +1032,28 @@ export default function Dashboard() {
                         </td>
                       )}
                       <td>{e.task_type || '—'}</td>
+                      <td
+                        title={e.note || ''}
+                        style={{
+                          maxWidth: 180,
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          color: e.note ? 'var(--text)' : 'var(--text-dim)',
+                          fontSize: 12,
+                        }}
+                      >
+                        {e.note || '—'}
+                      </td>
                       <td className="td-duration">{fmtDuration(e.duration_sec)}</td>
                       <td className="td-amount">{fmtAmount(e.duration_sec, e.rate_usd)}</td>
+                      <td
+                        className="td-mono"
+                        title={e.blue_venta ? `Blue venta congelado: $${e.blue_venta}` : 'Sin cotización congelada'}
+                        style={{ whiteSpace: 'nowrap', color: e.blue_venta ? 'var(--text)' : 'var(--text-dim)', fontSize: 11 }}
+                      >
+                        {fmtArs(e.duration_sec, e.rate_usd, e.blue_venta)}
+                      </td>
                       <td>
                         <span className={`badge badge-${e.source === 'manual' ? 'manual' : 'auto'}`}>
                           {e.source === 'manual' ? 'manual' : 'auto'}

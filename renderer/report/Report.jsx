@@ -40,6 +40,19 @@ function totalAmt(entries) {
   }, 0)
 }
 
+// Monto en pesos con la cotización del blue congelada en cada tarea
+function fmtArs(sec, rate, blue) {
+  if (!sec || !rate || !blue) return '—'
+  return `$${Math.round((sec / 3600) * rate * blue).toLocaleString('es-AR')}`
+}
+
+function totalArs(entries) {
+  return entries.reduce((a, e) => {
+    if (!e.duration_sec || !e.rate_usd || !e.blue_venta) return a
+    return a + (e.duration_sec / 3600) * e.rate_usd * e.blue_venta
+  }, 0)
+}
+
 export default function Report() {
   const [data, setData] = useState(null)
 
@@ -49,9 +62,12 @@ export default function Report() {
 
   if (!data) return null
 
-  const { entries = [], clientName, from, to } = data
+  const { entries = [], clientName, from, to, currency = 'usd', orgName } = data
+  const showUsd = currency === 'usd' || currency === 'ambos'
+  const showArs = currency === 'ars' || currency === 'ambos'
   const secTotal = totalSec(entries)
   const amtTotal = totalAmt(entries)
+  const arsTotal = totalArs(entries)
   const today = new Date().toLocaleDateString('es-AR', {
     day: '2-digit', month: 'long', year: 'numeric',
   })
@@ -61,7 +77,7 @@ export default function Report() {
       {/* Header */}
       <div style={styles.header}>
         <div>
-          <div style={styles.brand}>Smart Hours</div>
+          <div style={styles.brand}>{orgName || 'Smart Hours'}</div>
           <div style={styles.brandSub}>Registro de horas profesionales</div>
         </div>
         <div style={styles.headerRight}>
@@ -90,7 +106,12 @@ export default function Report() {
       <table style={styles.table}>
         <thead>
           <tr>
-            {['Inicio', 'Fin', 'Tipo de tarea', 'Duración', 'Importe', 'Origen'].map(h => (
+            {[
+              'Inicio', 'Fin', 'Tipo de tarea', 'Nota', 'Duración',
+              ...(showUsd ? ['Importe USD'] : []),
+              ...(showArs ? ['Importe ARS'] : []),
+              'Origen',
+            ].map(h => (
               <th key={h} style={styles.th}>{h}</th>
             ))}
           </tr>
@@ -101,8 +122,14 @@ export default function Report() {
               <td style={styles.td}>{fmtDateTime(e.started_at)}</td>
               <td style={styles.td}>{fmtDateTime(e.ended_at)}</td>
               <td style={styles.td}>{e.task_type || '—'}</td>
+              <td style={{ ...styles.td, ...styles.tdNote }}>{e.note || '—'}</td>
               <td style={{ ...styles.td, ...styles.tdMono }}>{fmtDuration(e.duration_sec)}</td>
-              <td style={{ ...styles.td, ...styles.tdMono, color: '#1a6640' }}>{fmtAmount(e.duration_sec, e.rate_usd)}</td>
+              {showUsd && (
+                <td style={{ ...styles.td, ...styles.tdMono, color: '#1a6640' }}>{fmtAmount(e.duration_sec, e.rate_usd)}</td>
+              )}
+              {showArs && (
+                <td style={{ ...styles.td, ...styles.tdMono, color: '#1a6640' }}>{fmtArs(e.duration_sec, e.rate_usd, e.blue_venta)}</td>
+              )}
               <td style={styles.td}>
                 <span style={e.source === 'manual' ? styles.badgeManual : styles.badgeAuto}>
                   {e.source === 'manual' ? 'Manual' : 'Auto'}
@@ -121,10 +148,18 @@ export default function Report() {
             <span style={styles.totalValue}>{fmtDuration(secTotal)}</span>
           </div>
           <div style={styles.totalDivider} />
-          <div style={styles.totalRow}>
-            <span style={styles.totalLabelBig}>Total a facturar</span>
-            <span style={styles.totalValueBig}>${amtTotal.toFixed(2)} USD</span>
-          </div>
+          {showUsd && (
+            <div style={styles.totalRow}>
+              <span style={styles.totalLabelBig}>Total a facturar (USD)</span>
+              <span style={styles.totalValueBig}>${amtTotal.toFixed(2)} USD</span>
+            </div>
+          )}
+          {showArs && (
+            <div style={styles.totalRow}>
+              <span style={styles.totalLabelBig}>Total a facturar (ARS)</span>
+              <span style={styles.totalValueBig}>${Math.round(arsTotal).toLocaleString('es-AR')}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -234,6 +269,12 @@ const styles = {
   tdMono: {
     fontFamily: "'Courier New', Courier, monospace",
     fontSize: '10px',
+  },
+  tdNote: {
+    maxWidth: '150px',
+    wordBreak: 'break-word',
+    whiteSpace: 'normal',
+    color: '#555',
   },
   badgeAuto: {
     display: 'inline-block',
